@@ -3,12 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { useFileUpload } from '../../hooks/useFileUpload';
 import { fileService } from '../../services/api';
 import FileUpload from '../Shared/FileUpload';
-import LoadingSpinner from '../Shared/LoadingSpinner';
-import ErrorAlert from '../Shared/ErrorAlert';
 
 export const UploadARPage: React.FC = () => {
   const navigate = useNavigate();
-  const { file, preview, loading, error, handleFileSelect, handleUpload, reset } =
+  const { preview, loading, error, handleFileSelect, handleUpload, reset } =
     useFileUpload(fileService.uploadAR);
 
   const handleProceed = async () => {

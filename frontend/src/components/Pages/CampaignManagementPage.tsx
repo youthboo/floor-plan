@@ -1,8 +1,11 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
+import AddCampaignsModal from '../Shared/AddCampaignsModal';
+import UploadCampaignModal from '../Shared/UploadCampaignModal';
 
 interface Campaign {
   code: string;
@@ -51,8 +54,30 @@ const mockCampaigns: Campaign[] = [
 ];
 
 export const CampaignManagementPage: React.FC = () => {
+  const navigate = useNavigate();
   const [campaigns] = useState<Campaign[]>(mockCampaigns);
+  const [isAddCampaignsModalOpen, setIsAddCampaignsModalOpen] = useState(false);
+  const [isUploadCampaignModalOpen, setIsUploadCampaignModalOpen] = useState(false);
   const activeCampaigns = campaigns.filter((c) => c.status === 'Active').length;
+
+  const handleAddCampaignClick = () => {
+    setIsAddCampaignsModalOpen(true);
+  };
+
+  const handleUploadFile = () => {
+    setIsAddCampaignsModalOpen(false);
+    setIsUploadCampaignModalOpen(true);
+  };
+
+  const handleAddManually = () => {
+    setIsAddCampaignsModalOpen(false);
+    navigate('/new-campaign');
+  };
+
+  const handleUploadCampaign = (file: File) => {
+    setIsUploadCampaignModalOpen(false);
+    // TODO: Call API to upload file
+  };
 
   return (
     <div className="w-full bg-white py-10">
@@ -80,10 +105,10 @@ export const CampaignManagementPage: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-shrink-0 gap-3">
-              <Button variant="default" size="sm">
+              <Button variant="default" size="sm" onClick={handleAddCampaignClick}>
                 + Add campaign
               </Button>
-              <Button variant="secondary" size="sm">
+              <Button variant="secondary" size="sm" onClick={() => navigate('/manage-campaigns')}>
                 Manage
               </Button>
             </div>
@@ -115,7 +140,8 @@ export const CampaignManagementPage: React.FC = () => {
                     <TableCell className="text-right">
                       <button
                         type="button"
-                        className="text-sm font-semibold text-primary-600 transition-colors hover:text-primary-700"
+                        onClick={() => navigate(`/campaign-detail/${campaign.code}`)}
+                        className="cursor-pointer text-sm font-semibold text-primary-600 transition-colors hover:text-primary-700"
                       >
                         View →
                       </button>
@@ -126,6 +152,19 @@ export const CampaignManagementPage: React.FC = () => {
             </Table>
           </CardContent>
         </Card>
+
+        <AddCampaignsModal
+          isOpen={isAddCampaignsModalOpen}
+          onClose={() => setIsAddCampaignsModalOpen(false)}
+          onUploadFile={handleUploadFile}
+          onAddManually={handleAddManually}
+        />
+
+        <UploadCampaignModal
+          isOpen={isUploadCampaignModalOpen}
+          onClose={() => setIsUploadCampaignModalOpen(false)}
+          onUpload={handleUploadCampaign}
+        />
       </div>
     </div>
   );
