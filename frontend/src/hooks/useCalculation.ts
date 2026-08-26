@@ -1,13 +1,26 @@
 import { useState } from 'react';
+import axios from 'axios';
 import { CalculationResponse } from '../types';
-import { calculationService } from '../services/api';
+import { calculationService, CalculationRunConfig } from '../services/api';
 
 interface UseCalculationReturn {
   result: CalculationResponse | null;
   loading: boolean;
   error: string | null;
-  calculate: (filePath: string, waiveFilePath?: string) => Promise<void>;
+  calculate: (
+    filePath: string,
+    options?: { waiveFilePath?: string; runConfig?: CalculationRunConfig }
+  ) => Promise<CalculationResponse | null>;
   reset: () => void;
+}
+
+function getErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    const data = err.response?.data as { error?: string; details?: string } | undefined;
+    return data?.error || err.message || 'Calculation failed';
+  }
+  if (err instanceof Error) return err.message;
+  return 'Calculation failed';
 }
 
 export const useCalculation = (): UseCalculationReturn => {
@@ -15,18 +28,28 @@ export const useCalculation = (): UseCalculationReturn => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const calculate = async (filePath: string, waiveFilePath?: string) => {
+  const calculate = async (
+    filePath: string,
+    options?: { waiveFilePath?: string; runConfig?: CalculationRunConfig }
+  ) => {
     try {
       setLoading(true);
       setError(null);
 
-      const data = waiveFilePath
-        ? await calculationService.calculateWithWaive(filePath, waiveFilePath)
-        : await calculationService.calculate(filePath);
+      const data = options?.waiveFilePath
+        ? await calculationService.calculateWithWaive(
+            filePath,
+            options.waiveFilePath,
+            options.runConfig
+          )
+        : await calculationService.calculate(filePath, options?.runConfig);
 
       setResult(data);
+      return data;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Calculation failed');
+      setError(getErrorMessage(err));
+      setResult(null);
+      return null;
     } finally {
       setLoading(false);
     }

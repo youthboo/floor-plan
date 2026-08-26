@@ -67,6 +67,40 @@ def load_config():
         raise Exception(f"Failed to load config: {str(e)}")
 
 
+def resolve_run_period(request_data, excel_config):
+    """
+    Resolve month_start / month_end / penalty_rate for a calculation run.
+    Prefer values from the UI request; fall back to Excel Config sheet.
+    """
+    month = request_data.get('month')
+    year = request_data.get('year')
+    penalty = request_data.get('penaltyRate')
+
+    if month is not None and year is not None and str(month).strip() and str(year).strip():
+        month_start = pd.to_datetime(f"1 {month} {year}", errors='coerce')
+        if pd.isna(month_start):
+            raise ValueError(f"Invalid month/year from UI: {month} {year}")
+        month_end = month_start + relativedelta(day=31)
+    else:
+        month_end = pd.to_datetime(excel_config.get('Month End Date'), dayfirst=True, errors='coerce')
+        if pd.isna(month_end):
+            raise ValueError('Invalid Month End Date in config')
+        month_start = month_end.replace(day=1)
+
+    if penalty is not None and penalty != '':
+        try:
+            penalty_rate = float(penalty)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid penaltyRate from UI: {penalty}")
+    else:
+        try:
+            penalty_rate = float(excel_config.get('Penalty Rate', 15))
+        except (TypeError, ValueError):
+            penalty_rate = 15.0
+
+    return month_start, month_end, penalty_rate
+
+
 def prepare_ar_data(df_ar, source_name):
     """Prepare and standardize AR data"""
     df = df_ar.copy()
@@ -314,6 +348,27 @@ def create_excel_output(df_ar, df_summary, df_rental_summary, month_end, is_waiv
     return filepath
 
 
+def append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary):
+    """Append 'Total Charge to Dealer' / 'Total RAM Rever Automotive' grand-total rows"""
+    sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
+
+    def total_row(label, df_group):
+        sums = df_group[sum_cols].sum() if len(df_group) > 0 else pd.Series(0.0, index=sum_cols)
+        return pd.Series({
+            'Dealer Group': '',
+            'Dealer Code': '',
+            'Dealer Name': label,
+            'AR Master Code': '',
+            **sums.to_dict(),
+        })
+
+    totals = pd.DataFrame([
+        total_row('Total Charge to Dealer', df_dealer_summary),
+        total_row('Total RAM Rever Automotive', df_ram_summary),
+    ])
+    return pd.concat([df_rental_summary, totals], ignore_index=True)
+
+
 # ============= API ENDPOINTS =============
 
 @app.route('/api/config', methods=['GET'])
@@ -323,10 +378,29 @@ def get_config():
         config_data = load_config()
         config = config_data['config']
 
+        month_end = pd.to_datetime(config.get('Month End Date'), dayfirst=True, errors='coerce')
+        if pd.isna(month_end):
+            return jsonify({'error': 'Invalid Month End Date in config'}), 400
+
+        full_month_days = config.get('Full Month Days')
+        if full_month_days is None or (isinstance(full_month_days, float) and pd.isna(full_month_days)):
+            full_month_days = int(month_end.days_in_month)
+        else:
+            full_month_days = int(full_month_days)
+
+        penalty_rate = config.get('Penalty Rate', 15)
+        try:
+            penalty_rate = float(penalty_rate)
+        except (TypeError, ValueError):
+            penalty_rate = 15.0
+
         result = {
             'config': {
-                'monthEndDate': str(config.get('Month End Date')),
-                'penaltyRate': float(config.get('Penalty Rate', 15))
+                'monthEndDate': month_end.strftime('%d-%m-%Y'),
+                'fullMonthDays': full_month_days,
+                'penaltyRate': penalty_rate,
+                'month': month_end.strftime('%B'),
+                'year': str(month_end.year),
             },
             'rates': config_data['rates'].to_dict('records'),
             'subventions': config_data['subventions'].to_dict('records')
@@ -423,12 +497,10 @@ def calculate():
         if not file_path or not os.path.exists(file_path):
             return jsonify({'error': 'File not found'}), 400
 
-        # Load config
+        # Load config (rates/subventions from Excel; period/penalty prefer UI)
         config_data = load_config()
         config = config_data['config']
-        month_end = pd.to_datetime(config['Month End Date'])
-        month_start = month_end.replace(day=1)
-        penalty_rate = float(config.get('Penalty Rate', 15))
+        month_start, month_end, penalty_rate = resolve_run_period(data, config)
         last_month_label = (month_end - relativedelta(months=1)).strftime('%b').lower()
 
         # Load AR file
@@ -519,7 +591,96 @@ def calculate():
             lambda x: 'RAM Rever Automotive' if x == 0 else 'Charge to Dealer'
         )
 
-        # Format dates and currency
+        # Stats + distribution (numeric, before display formatting)
+        rows_processed = int(len(df_ar_current))
+        total_ram_charge = float(pd.to_numeric(df_ar_current['RAM Charge'], errors='coerce').fillna(0).sum())
+        total_dealer_charge = float(pd.to_numeric(df_ar_current['Dealer Charge'], errors='coerce').fillna(0).sum())
+
+        campaign_counts = (
+            df_ar_current.assign(**{
+                'Subvention Campaign': df_ar_current['Subvention Campaign'].fillna('Normal').astype(str)
+            })
+            .groupby('Subvention Campaign', dropna=False)
+            .size()
+            .reset_index(name='vins')
+            .sort_values('vins', ascending=False)
+        )
+        campaign_distribution = [
+            {'campaign': str(row['Subvention Campaign']), 'vins': int(row['vins'])}
+            for _, row in campaign_counts.iterrows()
+        ]
+
+        summary_by_dealer = (
+            df_ar_current.groupby(['Dealer Code', 'Dealer Name'], dropna=False)
+            .agg(
+                vins=('VIN Number', 'count'),
+                ramCharge=('RAM Charge', 'sum'),
+                dealerCharge=('Dealer Charge', 'sum'),
+                arAmount=('Price (Ex. Vat)', 'sum'),
+            )
+            .reset_index()
+            .sort_values('arAmount', ascending=False)
+        )
+        summary_by_dealer_code = [
+            {
+                'dealerCode': str(row['Dealer Code']),
+                'dealerName': str(row['Dealer Name']),
+                'vins': int(row['vins']),
+                'ramCharge': float(row['ramCharge']),
+                'dealerCharge': float(row['dealerCharge']),
+                'arAmount': float(row['arAmount']),
+            }
+            for _, row in summary_by_dealer.iterrows()
+        ]
+
+        # Calculate summary (from numeric price before formatting)
+        price_numeric = pd.to_numeric(df_ar_current['Price (Ex. Vat)'], errors='coerce').fillna(0)
+        summary = {
+            'AR Last Month': float(price_numeric[df_ar_current['Source'] == 'AR Last Month'].sum()),
+            'New Volume': float(price_numeric[df_ar_current['Source'] == 'New Volume'].sum()),
+            'All Payment (Paid=Y)': float(price_numeric[df_ar_current['Paid'] == 'Y'].sum()),
+            'AR Outstanding (Paid=N)': float(price_numeric[df_ar_current['Paid'] == 'N'].sum()),
+        }
+        summary['Total'] = sum(summary.values())
+
+        summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Amount (THB)'])
+        summary_df['Amount (THB)'] = summary_df['Amount (THB)'].map('{:,.2f}'.format)
+
+        # Calculate dealer summary (numeric)
+        df_rental = df_ar_current.copy()
+        df_ram = df_rental[df_rental['RAM Charge (After Waive)'] > 0].copy()
+        df_dealer = df_rental[df_rental['Dealer Charge (After Waive)'] > 0].copy()
+
+        def create_dealer_summary(df_group, ar_code, wht_rate):
+            df_group = df_group.copy()
+            df_group['AR Master Code'] = ar_code
+            df_group['Amount per calculation'] = df_group[
+                'RAM Charge (After Waive)' if ar_code == 'RAM Rever Automotive' else 'Dealer Charge (After Waive)'
+            ]
+            df_group['Waive'] = pd.to_numeric(df_group['waive amount'], errors='coerce').fillna(0)
+            df_group['WHT'] = df_group['Amount per calculation'] * wht_rate
+            df_group['VAT'] = df_group['Amount per calculation'] * 0.07
+            df_group['Total Receivable'] = df_group['Amount per calculation'] - df_group['WHT'] + df_group['VAT']
+            df_group['Total'] = df_group['Amount per calculation'] + df_group['VAT']
+
+            return df_group[[
+                'Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code',
+                'Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total'
+            ]]
+
+        df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', 0.03)
+        df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', 0.05)
+
+        group_cols = ['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code']
+        sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
+
+        df_ram_summary = df_ram_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
+        df_dealer_summary = df_dealer_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
+
+        df_rental_summary = pd.concat([df_dealer_summary, df_ram_summary], ignore_index=True)
+        df_rental_summary = append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary)
+
+        # Format dates and currency for export / detail preview
         df_ar_current['Allocation Date'] = pd.to_datetime(df_ar_current['Allocation Date'], errors='coerce').dt.strftime('%d/%m/%Y')
         df_ar_current['Payment Date'] = pd.to_datetime(df_ar_current['Payment Date'], errors='coerce').fillna(month_end).dt.strftime('%d/%m/%Y')
         df_ar_current['Due Date'] = pd.to_datetime(df_ar_current['Due Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
@@ -532,60 +693,26 @@ def calculate():
         df_ar_current['RAM Charge (After Waive)'] = df_ar_current['RAM Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
         df_ar_current['Dealer Charge (After Waive)'] = df_ar_current['Dealer Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
 
-        # Calculate summary
-        summary = {
-            'AR Last Month': float(df_ar_current[df_ar_current['Source'] == 'AR Last Month']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'New Volume': float(df_ar_current[df_ar_current['Source'] == 'New Volume']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'All Payment (Paid=Y)': float(df_ar_current[df_ar_current['Paid'] == 'Y']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'AR Outstanding (Paid=N)': float(df_ar_current[df_ar_current['Paid'] == 'N']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-        }
-        summary['Total'] = sum(summary.values())
-
-        summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Amount (THB)'])
-        summary_df['Amount (THB)'] = summary_df['Amount (THB)'].map('{:,.2f}'.format)
-
-        # Calculate dealer summary
-        df_rental = df_ar_current.copy()
-        for col in ['RAM Charge (After Waive)', 'Dealer Charge (After Waive)']:
-            df_rental[col] = df_rental[col].str.replace(',', '').astype(float)
-
-        df_ram = df_rental[df_rental['RAM Charge (After Waive)'] > 0].copy()
-        df_dealer = df_rental[df_rental['Dealer Charge (After Waive)'] > 0].copy()
-
-        def create_dealer_summary(df_group, ar_code, wht_rate):
-            df_group = df_group.copy()
-            df_group['AR Master Code'] = ar_code
-            df_group['Amount per calculation'] = df_group['RAM Charge (After Waive)' if ar_code == 'RAM Rever Automotive' else 'Dealer Charge (After Waive)']
-            df_group['Waive'] = df_group['waive amount'].str.replace(',', '').astype(float)
-            df_group['WHT'] = df_group['Amount per calculation'] * wht_rate
-            df_group['VAT'] = df_group['Amount per calculation'] * 0.07
-            df_group['Total Receivable'] = df_group['Amount per calculation'] - df_group['WHT'] + df_group['VAT']
-            df_group['Total'] = df_group['Amount per calculation'] + df_group['VAT']
-
-            return df_group[['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code', 'Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']]
-
-        df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', 0.03)
-        df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', 0.05)
-
-        group_cols = ['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code']
-        sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
-
-        df_ram_summary = df_ram_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
-        df_dealer_summary = df_dealer_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
-
-        df_rental_summary = pd.concat([df_dealer_summary, df_ram_summary], ignore_index=True)
-
         # Create Excel file
         output_path = create_excel_output(df_ar_current, summary_df, df_rental_summary, month_end)
 
-        return jsonify({
+        return jsonify(clean_nan_values({
             'success': True,
             'message': 'Calculation completed',
             'outputPath': output_path,
+            'stats': {
+                'rowsProcessed': rows_processed,
+                'totalRamCharge': total_ram_charge,
+                'totalDealerCharge': total_dealer_charge,
+                'mismatchCount': 0,
+            },
+            'campaignDistribution': campaign_distribution,
+            'mismatches': [],
             'summary': summary,
-            'detailRecords': df_ar_current.head(100).to_dict('records'),
-            'dealerSummary': df_rental_summary.to_dict('records')
-        })
+            'summaryByDealerCode': summary_by_dealer_code,
+            'detailRecords': df_ar_current.to_dict('records'),
+            'dealerSummary': df_rental_summary.to_dict('records'),
+        }))
     except Exception as e:
         return jsonify({'error': str(e), 'details': traceback.format_exc()}), 400
 
@@ -604,12 +731,10 @@ def calculate_with_waive():
         if not waive_file_path or not os.path.exists(waive_file_path):
             return jsonify({'error': 'Waive file not found'}), 400
 
-        # Load config
+        # Load config (rates/subventions from Excel; period/penalty prefer UI)
         config_data = load_config()
         config = config_data['config']
-        month_end = pd.to_datetime(config['Month End Date'])
-        month_start = month_end.replace(day=1)
-        penalty_rate = float(config.get('Penalty Rate', 15))
+        month_start, month_end, penalty_rate = resolve_run_period(data, config)
         last_month_label = (month_end - relativedelta(months=1)).strftime('%b').lower()
 
         # Load waive file
@@ -698,6 +823,97 @@ def calculate_with_waive():
             lambda x: 'RAM Rever Automotive' if x == 0 else 'Charge to Dealer'
         )
 
+        # Stats + distribution (numeric, before display formatting)
+        rows_processed = int(len(df_ar_current))
+        total_ram_charge = float(pd.to_numeric(df_ar_current['RAM Charge'], errors='coerce').fillna(0).sum())
+        total_dealer_charge = float(pd.to_numeric(df_ar_current['Dealer Charge'], errors='coerce').fillna(0).sum())
+        total_waive = float(pd.to_numeric(df_ar_current['waive amount'], errors='coerce').fillna(0).sum())
+
+        campaign_counts = (
+            df_ar_current.assign(**{
+                'Subvention Campaign': df_ar_current['Subvention Campaign'].fillna('Normal').astype(str)
+            })
+            .groupby('Subvention Campaign', dropna=False)
+            .size()
+            .reset_index(name='vins')
+            .sort_values('vins', ascending=False)
+        )
+        campaign_distribution = [
+            {'campaign': str(row['Subvention Campaign']), 'vins': int(row['vins'])}
+            for _, row in campaign_counts.iterrows()
+        ]
+
+        summary_by_dealer = (
+            df_ar_current.groupby(['Dealer Code', 'Dealer Name'], dropna=False)
+            .agg(
+                vins=('VIN Number', 'count'),
+                ramCharge=('RAM Charge', 'sum'),
+                dealerCharge=('Dealer Charge', 'sum'),
+                arAmount=('Price (Ex. Vat)', 'sum'),
+            )
+            .reset_index()
+            .sort_values('arAmount', ascending=False)
+        )
+        summary_by_dealer_code = [
+            {
+                'dealerCode': str(row['Dealer Code']),
+                'dealerName': str(row['Dealer Name']),
+                'vins': int(row['vins']),
+                'ramCharge': float(row['ramCharge']),
+                'dealerCharge': float(row['dealerCharge']),
+                'arAmount': float(row['arAmount']),
+            }
+            for _, row in summary_by_dealer.iterrows()
+        ]
+
+        price_numeric = pd.to_numeric(df_ar_current['Price (Ex. Vat)'], errors='coerce').fillna(0)
+        summary = {
+            'AR Last Month': float(price_numeric[df_ar_current['Source'] == 'AR Last Month'].sum()),
+            'New Volume': float(price_numeric[df_ar_current['Source'] == 'New Volume'].sum()),
+            'All Payment (Paid=Y)': float(price_numeric[df_ar_current['Paid'] == 'Y'].sum()),
+            'AR Outstanding (Paid=N)': float(price_numeric[df_ar_current['Paid'] == 'N'].sum()),
+        }
+        summary['Total'] = float(sum(summary.values()))
+
+        summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Amount (THB)'])
+        summary_df['Amount (THB)'] = summary_df['Amount (THB)'].map('{:,.2f}'.format)
+
+        # Dealer summary (numeric, before formatting)
+        df_rental = df_ar_current.copy()
+        df_ram = df_rental[df_rental['RAM Charge (After Waive)'] > 0].copy()
+        df_dealer = df_rental[df_rental['Dealer Charge (After Waive)'] > 0].copy()
+
+        def create_dealer_summary(df_group, ar_code, wht_rate):
+            df_group = df_group.copy()
+            df_group['AR Master Code'] = ar_code
+            df_group['Amount per calculation'] = df_group[
+                'RAM Charge (After Waive)' if ar_code == 'RAM Rever Automotive' else 'Dealer Charge (After Waive)'
+            ]
+            df_group['Waive'] = pd.to_numeric(df_group['waive amount'], errors='coerce').fillna(0)
+            df_group['WHT'] = df_group['Amount per calculation'] * wht_rate
+            df_group['VAT'] = df_group['Amount per calculation'] * 0.07
+            df_group['Total Receivable'] = df_group['Amount per calculation'] - df_group['WHT'] + df_group['VAT']
+            df_group['Total'] = df_group['Amount per calculation'] + df_group['VAT']
+
+            return df_group[[
+                'Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code',
+                'Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total'
+            ]]
+
+        df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', 0.03)
+        df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', 0.05)
+
+        group_cols = ['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code']
+        sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
+
+        if len(df_ram_summary) > 0:
+            df_ram_summary = df_ram_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
+        if len(df_dealer_summary) > 0:
+            df_dealer_summary = df_dealer_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
+
+        df_rental_summary = pd.concat([df_dealer_summary, df_ram_summary], ignore_index=True)
+        df_rental_summary = append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary)
+
         df_ar_current['Allocation Date'] = pd.to_datetime(df_ar_current['Allocation Date'], errors='coerce').dt.strftime('%d/%m/%Y')
         df_ar_current['Payment Date'] = pd.to_datetime(df_ar_current['Payment Date'], errors='coerce').fillna(month_end).dt.strftime('%d/%m/%Y')
         df_ar_current['Due Date'] = pd.to_datetime(df_ar_current['Due Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
@@ -710,58 +926,26 @@ def calculate_with_waive():
         df_ar_current['RAM Charge (After Waive)'] = df_ar_current['RAM Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
         df_ar_current['Dealer Charge (After Waive)'] = df_ar_current['Dealer Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
 
-        summary = {
-            'AR Last Month': float(df_ar_current[df_ar_current['Source'] == 'AR Last Month']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'New Volume': float(df_ar_current[df_ar_current['Source'] == 'New Volume']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'All Payment (Paid=Y)': float(df_ar_current[df_ar_current['Paid'] == 'Y']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-            'AR Outstanding (Paid=N)': float(df_ar_current[df_ar_current['Paid'] == 'N']['Price (Ex. Vat)'].str.replace(',', '').astype(float).sum()),
-        }
-        summary['Total'] = sum(summary.values())
-
-        summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Amount (THB)'])
-        summary_df['Amount (THB)'] = summary_df['Amount (THB)'].map('{:,.2f}'.format)
-
-        # Dealer summary (same logic)
-        df_rental = df_ar_current.copy()
-        for col in ['RAM Charge (After Waive)', 'Dealer Charge (After Waive)']:
-            df_rental[col] = df_rental[col].str.replace(',', '').astype(float)
-
-        df_ram = df_rental[df_rental['RAM Charge (After Waive)'] > 0].copy()
-        df_dealer = df_rental[df_rental['Dealer Charge (After Waive)'] > 0].copy()
-
-        def create_dealer_summary(df_group, ar_code, wht_rate):
-            df_group = df_group.copy()
-            df_group['AR Master Code'] = ar_code
-            df_group['Amount per calculation'] = df_group['RAM Charge (After Waive)' if ar_code == 'RAM Rever Automotive' else 'Dealer Charge (After Waive)']
-            df_group['Waive'] = df_group['waive amount'].str.replace(',', '').astype(float)
-            df_group['WHT'] = df_group['Amount per calculation'] * wht_rate
-            df_group['VAT'] = df_group['Amount per calculation'] * 0.07
-            df_group['Total Receivable'] = df_group['Amount per calculation'] - df_group['WHT'] + df_group['VAT']
-            df_group['Total'] = df_group['Amount per calculation'] + df_group['VAT']
-
-            return df_group[['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code', 'Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']]
-
-        df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', 0.03)
-        df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', 0.05)
-
-        group_cols = ['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code']
-        sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
-
-        df_ram_summary = df_ram_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
-        df_dealer_summary = df_dealer_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
-
-        df_rental_summary = pd.concat([df_dealer_summary, df_ram_summary], ignore_index=True)
-
         output_path = create_excel_output(df_ar_current, summary_df, df_rental_summary, month_end, is_waive=True)
 
-        return jsonify({
+        return jsonify(clean_nan_values({
             'success': True,
-            'message': 'Waive calculation completed',
+            'message': 'Recalculated with waive conditions applied',
             'outputPath': output_path,
+            'stats': {
+                'rowsProcessed': rows_processed,
+                'totalRamCharge': total_ram_charge,
+                'totalDealerCharge': total_dealer_charge,
+                'totalWaive': total_waive,
+                'mismatchCount': 0,
+            },
+            'campaignDistribution': campaign_distribution,
+            'mismatches': [],
             'summary': summary,
-            'detailRecords': df_ar_current.head(100).to_dict('records'),
-            'dealerSummary': df_rental_summary.to_dict('records')
-        })
+            'summaryByDealerCode': summary_by_dealer_code,
+            'detailRecords': df_ar_current.to_dict('records'),
+            'dealerSummary': df_rental_summary.to_dict('records'),
+        }))
     except Exception as e:
         return jsonify({'error': str(e), 'details': traceback.format_exc()}), 400
 

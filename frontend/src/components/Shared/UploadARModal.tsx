@@ -3,13 +3,13 @@ import Dialog from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import FileDropzone from './FileDropzone';
 
-interface UploadCampaignModalProps {
+interface UploadARModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUpload: (file: File) => void;
 }
 
-export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
+export const UploadARModal: React.FC<UploadARModalProps> = ({
   isOpen,
   onClose,
   onUpload,
@@ -29,31 +29,23 @@ export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload campaign file" size="md">
+    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload AR drawdown file" size="lg">
       <div className="space-y-6">
         <p className="text-sm text-slate-600">
-          Choose an Excel file. A single file can define multiple campaigns.
+          Wholesale AR drawdown file — the basis for the interest calculation.
         </p>
 
-        <div>
-          <label className="mb-2 block text-sm font-medium text-slate-900">File</label>
-          <FileDropzone
-            ariaLabel="Choose campaign file"
-            selectedFile={selectedFile}
-            onFileSelect={setSelectedFile}
-            placeholder="Click to choose campaign file"
-          />
-        </div>
+        <FileDropzone
+          ariaLabel="Choose AR drawdown file"
+          selectedFile={selectedFile}
+          onFileSelect={setSelectedFile}
+        />
 
         <div className="flex justify-end gap-3 pt-4">
           <Button variant="secondary" onClick={handleClose}>
             Cancel
           </Button>
-          <Button
-            variant="default"
-            onClick={handleUpload}
-            disabled={!selectedFile}
-          >
+          <Button variant="default" onClick={handleUpload} disabled={!selectedFile}>
             Upload
           </Button>
         </div>
@@ -62,4 +54,4 @@ export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
   );
 };
 
-export default UploadCampaignModal;
+export default UploadARModal;

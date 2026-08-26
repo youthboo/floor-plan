@@ -1,7 +1,10 @@
 // ============= CONFIG TYPES =============
 export interface ConfigData {
   monthEndDate: string;
+  fullMonthDays: number;
   penaltyRate: number;
+  month: string;
+  year: string;
 }
 
 export interface RateRange {
@@ -95,13 +98,48 @@ export interface WaiveUploadResponse extends FileUploadResponse {
   approvedCount: number;
 }
 
+export interface CalculationStats {
+  rowsProcessed: number;
+  totalRamCharge: number;
+  totalDealerCharge: number;
+  mismatchCount: number;
+}
+
+export interface CampaignDistributionItem {
+  campaign: string;
+  vins: number;
+}
+
+export interface CampaignMismatch {
+  vinNumber: string;
+  dealer: string;
+  model: string;
+  drawdown: string;
+  assignedTo: string;
+  shouldBe: string;
+  reason: string;
+}
+
+export interface SummaryByDealerCodeItem {
+  dealerCode: string;
+  dealerName: string;
+  vins: number;
+  ramCharge: number;
+  dealerCharge: number;
+  arAmount: number;
+}
+
 export interface CalculationResponse {
   success: boolean;
   message: string;
   outputPath: string;
+  stats?: CalculationStats;
+  campaignDistribution?: CampaignDistributionItem[];
+  mismatches?: CampaignMismatch[];
   summary: SummaryData;
-  detailRecords: ARRecord[];
-  dealerSummary: DealerSummaryRecord[];
+  summaryByDealerCode?: SummaryByDealerCodeItem[];
+  detailRecords: Record<string, unknown>[];
+  dealerSummary: Record<string, unknown>[];
 }
 
 export interface ApiError {

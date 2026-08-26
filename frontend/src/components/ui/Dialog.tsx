@@ -49,7 +49,7 @@ export const Dialog: React.FC<DialogProps> = ({
               <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
               <button
                 onClick={onClose}
-                className="text-slate-400 hover:text-slate-600"
+                className="cursor-pointer text-slate-400 hover:text-slate-600"
                 aria-label="Close dialog"
                 type="button"
               >

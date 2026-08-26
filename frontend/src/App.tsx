@@ -5,7 +5,7 @@ import UploadCalculatePage from './components/Pages/UploadCalculatePage';
 import PreviewARPage from './components/Pages/PreviewARPage';
 import NewCampaignPage from './components/Pages/NewCampaignPage';
 import CampaignDetailPage from './components/Pages/CampaignDetailPage';
-import { cn } from './lib/utils';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/Tabs';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
@@ -27,46 +27,29 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <>
+    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'campaign' | 'upload')}>
       <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
         <div className="flex items-center justify-center px-4 py-4">
-          <nav
-            className="inline-flex items-center rounded-full bg-white/50 p-1"
-            aria-label="Main"
-          >
-            <button
-              type="button"
-              onClick={() => setActiveTab('campaign')}
-              className={cn(
-                'rounded-full px-5 py-2 text-sm font-medium transition-all',
-                activeTab === 'campaign'
-                  ? 'bg-white text-primary-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
+          <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">
+            <TabsTrigger variant="nav" value="campaign">
               Campaign Management
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('upload')}
-              className={cn(
-                'rounded-full px-5 py-2 text-sm font-medium transition-all',
-                activeTab === 'upload'
-                  ? 'bg-primary-50 text-primary-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
+            </TabsTrigger>
+            <TabsTrigger variant="nav" value="upload">
               Upload & Calculate
-            </button>
-          </nav>
+            </TabsTrigger>
+          </TabsList>
         </div>
       </header>
 
       <main className="flex-1">
-        {activeTab === 'campaign' && <CampaignManagementPage />}
-        {activeTab === 'upload' && <UploadCalculatePage />}
+        <TabsContent value="campaign">
+          <CampaignManagementPage />
+        </TabsContent>
+        <TabsContent value="upload">
+          <UploadCalculatePage />
+        </TabsContent>
       </main>
-    </>
+    </Tabs>
   );
 };
 

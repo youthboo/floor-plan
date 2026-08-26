@@ -82,22 +82,34 @@ export const fileService = {
   },
 };
 
+export interface CalculationRunConfig {
+  month: string;
+  year: string;
+  penaltyRate: number;
+}
+
 // ============= CALCULATION ENDPOINTS =============
 export const calculationService = {
-  calculate: async (filePath: string): Promise<CalculationResponse> => {
+  calculate: async (
+    filePath: string,
+    runConfig?: CalculationRunConfig
+  ): Promise<CalculationResponse> => {
     const response = await apiClient.post<CalculationResponse>('/calculate', {
       filePath,
+      ...(runConfig ?? {}),
     });
     return response.data;
   },
 
   calculateWithWaive: async (
     arFilePath: string,
-    waiveFilePath: string
+    waiveFilePath: string,
+    runConfig?: CalculationRunConfig
   ): Promise<CalculationResponse> => {
     const response = await apiClient.post<CalculationResponse>('/calculate-with-waive', {
       arFilePath,
       waiveFilePath,
+      ...(runConfig ?? {}),
     });
     return response.data;
   },

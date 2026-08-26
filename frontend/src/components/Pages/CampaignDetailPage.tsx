@@ -1,8 +1,19 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
-import { cn } from '../../lib/utils';
+import { Checkbox } from '../ui/Checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../ui/Select';
+import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
+
+const AFFECTED_DEALERS_OPTIONS = ['All dealers', 'Selected dealers'];
 
 export const CampaignDetailPage: React.FC = () => {
   const navigate = useNavigate();
@@ -76,6 +87,8 @@ export const CampaignDetailPage: React.FC = () => {
     ],
   };
 
+  const [conditions, setConditions] = useState(campaignData.campaignConditions);
+
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab });
     navigate(`/?tab=${tab}`);
@@ -93,67 +106,49 @@ export const CampaignDetailPage: React.FC = () => {
     <div className="flex min-h-screen flex-col bg-white">
       <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
         <div className="flex items-center justify-center px-4 py-4">
-          <nav
-            className="inline-flex items-center rounded-full bg-white/50 p-1"
-            aria-label="Main"
-          >
-            <button
-              type="button"
-              onClick={() => handleTabChange('campaign')}
-              className={cn(
-                'cursor-pointer rounded-full px-5 py-2 text-sm font-medium transition-all',
-                activeTab === 'campaign'
-                  ? 'bg-white text-primary-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              Campaign Management
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTabChange('upload')}
-              className={cn(
-                'cursor-pointer rounded-full px-5 py-2 text-sm font-medium transition-all',
-                activeTab === 'upload'
-                  ? 'bg-primary-50 text-primary-700 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-700'
-              )}
-            >
-              Upload & Calculate
-            </button>
-          </nav>
+          <Tabs value={activeTab} onValueChange={handleTabChange}>
+            <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">
+              <TabsTrigger variant="nav" value="campaign">
+                Campaign Management
+              </TabsTrigger>
+              <TabsTrigger variant="nav" value="upload">
+                Upload & Calculate
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
       </header>
 
       <main className="flex-1">
         <div className="w-full bg-white py-10">
-          <div className="mx-auto max-w-5xl px-6 sm:px-10">
+          <div className="mx-auto max-w-7xl px-6 sm:px-10">
             {/* Header */}
-            <div className="mb-8 flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={handleBack}
-                  className="cursor-pointer text-slate-600 hover:text-slate-900"
-                >
-                  ← All campaigns
-                </button>
+            <div className="mb-8">
+              <button
+                onClick={handleBack}
+                className="mb-4 inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                All campaigns
+              </button>
+              <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+                  <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
                     {campaignData.name}
                   </h1>
-                  <p className="mt-2 text-sm text-slate-600">
+                  <p className="mt-1.5 text-sm text-slate-500">
                     Code {campaignData.code} · {campaignData.quotaRows} quota rows ·{' '}
                     {campaignData.rateTiers} rate tiers · {campaignData.units.toLocaleString()} units
                   </p>
                 </div>
-              </div>
-              <div className="flex gap-3">
-                <Button variant="secondary" onClick={handleBack}>
-                  Duplicate
-                </Button>
-                <Button variant="default" onClick={handleEdit}>
-                  Edit
-                </Button>
+                <div className="flex flex-shrink-0 gap-3">
+                  <Button variant="secondary" onClick={handleBack}>
+                    Duplicate
+                  </Button>
+                  <Button variant="default" onClick={handleEdit}>
+                    Edit
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -184,7 +179,7 @@ export const CampaignDetailPage: React.FC = () => {
                   <h2 className="text-lg font-semibold text-slate-900">
                     Campaign condition{' '}
                     <span className="text-sm font-normal text-slate-600">
-                      {campaignData.campaignConditions.length} rows
+                      {conditions.length} rows
                     </span>
                   </h2>
                   <p className="mt-1 text-sm text-slate-600">
@@ -217,7 +212,7 @@ export const CampaignDetailPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {campaignData.campaignConditions.map((condition, idx) => (
+                      {conditions.map((condition, idx) => (
                         <tr key={idx} className="border-b border-slate-200">
                           <td className="px-4 py-3 text-slate-900">{condition.campaign}</td>
                           <td className="px-4 py-3 text-slate-900">{condition.range}</td>
@@ -225,9 +220,27 @@ export const CampaignDetailPage: React.FC = () => {
                           <td className="px-4 py-3 text-slate-900">{condition.ddStart}</td>
                           <td className="px-4 py-3 text-slate-900">{condition.ddEnd}</td>
                           <td className="px-4 py-3 text-slate-900">
-                            <select className="rounded border border-slate-300 bg-white px-2 py-1 text-slate-700">
-                              <option>{condition.affectedDealers}</option>
-                            </select>
+                            <Select
+                              value={condition.affectedDealers}
+                              onValueChange={(value) =>
+                                setConditions((prev) =>
+                                  prev.map((c) =>
+                                    c.id === condition.id ? { ...c, affectedDealers: value } : c
+                                  )
+                                )
+                              }
+                            >
+                              <SelectTrigger className="h-9 w-40">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {AFFECTED_DEALERS_OPTIONS.map((option) => (
+                                  <SelectItem key={option} value={option}>
+                                    {option}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </td>
                           <td className="px-4 py-3 text-slate-600">-</td>
                         </tr>
@@ -291,11 +304,10 @@ export const CampaignDetailPage: React.FC = () => {
                           <td className="px-4 py-3 text-slate-900">{tier.effectiveEnd}</td>
                           <td className="px-4 py-3 text-slate-900">
                             {tier.active ? (
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 checked={tier.active}
-                                readOnly
-                                className="h-5 w-5 rounded border-slate-300 bg-primary-700 text-primary-700"
+                                disabled
+                                className="h-5 w-5 cursor-default disabled:opacity-100"
                               />
                             ) : (
                               '-'
@@ -303,11 +315,10 @@ export const CampaignDetailPage: React.FC = () => {
                           </td>
                           <td className="px-4 py-3 text-slate-900">
                             {tier.deliveryDate ? (
-                              <input
-                                type="checkbox"
+                              <Checkbox
                                 checked={tier.deliveryDate}
-                                readOnly
-                                className="h-5 w-5 rounded border-slate-300 bg-primary-700 text-primary-700"
+                                disabled
+                                className="h-5 w-5 cursor-default disabled:opacity-100"
                               />
                             ) : (
                               '-'

@@ -77,11 +77,11 @@ export const PreviewARPage: React.FC = () => {
                 <tbody>
                   {result.detailRecords.slice(0, 10).map((record, idx) => (
                     <tr key={idx}>
-                      <td>{record.dealerCode}</td>
-                      <td>{record.vinNumber}</td>
-                      <td>{formatCurrency(record.price)}</td>
-                      <td>{formatCurrency(record.ramCharge)}</td>
-                      <td>{formatCurrency(record.dealerCharge)}</td>
+                      <td>{String(record['Dealer Code'] ?? '')}</td>
+                      <td>{String(record['VIN Number'] ?? '')}</td>
+                      <td>{formatCurrency(String(record['Price (Ex. Vat)'] ?? 0))}</td>
+                      <td>{formatCurrency(String(record['RAM Charge'] ?? 0))}</td>
+                      <td>{formatCurrency(String(record['Dealer Charge'] ?? 0))}</td>
                     </tr>
                   ))}
                 </tbody>
