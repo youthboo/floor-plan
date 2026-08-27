@@ -16,7 +16,7 @@ export const AddCampaignsModal: React.FC<AddCampaignsModalProps> = ({
   onAddManually,
 }) => {
   return (
-    <Dialog isOpen={isOpen} onClose={onClose} title="Add campaigns" size="md">
+    <Dialog isOpen={isOpen} onClose={onClose} title="Add campaigns" size="xl">
       <div className="space-y-3">
         <p className="text-sm text-slate-600">
           Choose how you want to add campaigns.

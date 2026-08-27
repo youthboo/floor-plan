@@ -13,6 +13,7 @@ import {
 } from '../ui/Select';
 import UploadARModal from '../Shared/UploadARModal';
 import UploadWaiveModal from '../Shared/UploadWaiveModal';
+import UploadSOTModal from '../Shared/UploadSOTModal';
 import ARDrawdownPreview from '../Shared/ARDrawdownPreview';
 import CalculationResultView from '../Shared/CalculationResultView';
 import LoadingSpinner from '../Shared/LoadingSpinner';
@@ -83,6 +84,8 @@ export const UploadCalculatePage: React.FC = () => {
   const [uploadedFilePath, setUploadedFilePath] = useState<string | null>(null);
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isWaiveModalOpen, setIsWaiveModalOpen] = useState(false);
+  const [isSOTModalOpen, setIsSOTModalOpen] = useState(false);
+  const [sotFile, setSotFile] = useState<File | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isWaiveRecalculating, setIsWaiveRecalculating] = useState(false);
@@ -106,7 +109,7 @@ export const UploadCalculatePage: React.FC = () => {
     const years = new Set(BASE_YEARS);
     if (systemConfig?.year) years.add(systemConfig.year);
     if (appConfig?.config.year) years.add(appConfig.config.year);
-    return Array.from(years).sort();
+    return Array.from(years).sort((a, b) => a.localeCompare(b));
   }, [systemConfig?.year, appConfig?.config.year]);
 
   const { monthEndDate, fullMonthDays } = useMemo(() => {
@@ -129,6 +132,7 @@ export const UploadCalculatePage: React.FC = () => {
       setArFile(file);
       setWorkbook(preview);
       setUploadedFilePath(null);
+      setSotFile(null);
     } catch {
       setArFile(null);
       setWorkbook(null);
@@ -147,6 +151,8 @@ export const UploadCalculatePage: React.FC = () => {
     setCalcResult(null);
     setIsEditingConfig(false);
     setIsWaiveModalOpen(false);
+    setIsSOTModalOpen(false);
+    setSotFile(null);
     resetCalculation();
     if (appConfig?.config) {
       setSystemConfig({
@@ -236,6 +242,11 @@ export const UploadCalculatePage: React.FC = () => {
     }
   };
 
+  const handleSOTUpload = (file: File) => {
+    setIsSOTModalOpen(false);
+    setSotFile(file);
+  };
+
   const handleExport = async () => {
     if (!calcResult?.outputPath) return;
     const name = calcResult.outputPath.split(/[/\\]/).pop() || 'AR_Summary.xlsx';
@@ -283,6 +294,11 @@ export const UploadCalculatePage: React.FC = () => {
         workbook={workbook}
         onReset={handleReset}
         onCalculate={handleCalculate}
+        onUploadSOT={() => {
+          setPageError(null);
+          setIsSOTModalOpen(true);
+        }}
+        sotFileName={sotFile?.name}
       />
     );
   } else {
@@ -394,7 +410,7 @@ export const UploadCalculatePage: React.FC = () => {
                     <Input
                       id="penalty-rate"
                       type="number"
-                      value={systemConfig.penaltyRate}
+                      value={systemConfig.penaltyRate === 0 ? '' : systemConfig.penaltyRate}
                       disabled={!isEditingConfig}
                       onChange={(e) =>
                         setSystemConfig({
@@ -464,6 +480,12 @@ export const UploadCalculatePage: React.FC = () => {
         onClose={() => setIsWaiveModalOpen(false)}
         onRecalculate={handleWaiveRecalculate}
         isSubmitting={isWaiveRecalculating}
+      />
+
+      <UploadSOTModal
+        isOpen={isSOTModalOpen}
+        onClose={() => setIsSOTModalOpen(false)}
+        onUpload={handleSOTUpload}
       />
     </div>
   );

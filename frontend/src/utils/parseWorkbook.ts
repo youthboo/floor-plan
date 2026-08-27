@@ -23,20 +23,30 @@ function normalizeCell(value: unknown): CellValue {
 }
 
 function parseSheet(name: string, sheet: XLSX.WorkSheet): SheetPreview {
+  // Keep blank rows in place so row indices match the sheet's physical row numbers.
   const matrix = XLSX.utils.sheet_to_json<(string | number | boolean | Date | null | undefined)[]>(
     sheet,
-    { header: 1, defval: null, raw: true, blankrows: false }
+    { header: 1, defval: null, raw: true, blankrows: true }
   );
 
   if (!matrix.length) {
     return { name, headers: [], rows: [] };
   }
 
-  // Use the first non-empty row as headers (top content row of the sheet)
-  const headerRowIndex = matrix.findIndex((row) =>
-    (row ?? []).some((cell) => cell !== null && cell !== undefined && cell !== '')
-  );
-  const startIndex = headerRowIndex >= 0 ? headerRowIndex : 0;
+  const isSummarySheet = name.trim().toLowerCase() === 'summary';
+
+  let startIndex: number;
+  if (isSummarySheet) {
+    // Summary sheet: use the first non-empty row as headers (top content row of the sheet)
+    const headerRowIndex = matrix.findIndex((row) =>
+      (row ?? []).some((cell) => cell !== null && cell !== undefined && cell !== '')
+    );
+    startIndex = headerRowIndex >= 0 ? headerRowIndex : 0;
+  } else {
+    // Every other sheet: column headers live on row 2, data starts on row 3.
+    startIndex = matrix.length > 1 ? 1 : 0;
+  }
+
   const headerRow = matrix[startIndex] ?? [];
 
   const columnCount = Math.max(

@@ -29,7 +29,7 @@ export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload campaign file" size="md">
+    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload campaign file" size="xl">
       <div className="space-y-6">
         <p className="text-sm text-slate-600">
           Choose an Excel file. A single file can define multiple campaigns.

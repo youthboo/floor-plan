@@ -36,7 +36,7 @@ export const UploadWaiveModal: React.FC<UploadWaiveModalProps> = ({
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload waive conditions" size="lg">
+    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload waive conditions" size="xl">
       <div className="space-y-6">
         <p className="text-sm text-slate-600">
           Choose the waive conditions file, then recalculate to apply it.

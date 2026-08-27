@@ -316,7 +316,7 @@ export const CampaignManagementPage: React.FC = () => {
                       colSpan={isManageMode ? 6 : 6}
                       className="py-10 text-center text-sm text-slate-500"
                     >
-                      No campaigns found
+                      No campaigns match your search
                     </TableCell>
                   </TableRow>
                 ) : (

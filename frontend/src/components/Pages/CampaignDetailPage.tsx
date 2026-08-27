@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '../ui/Select';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
+import { getMockCampaign } from '../../data/mockCampaigns';
 
 const AFFECTED_DEALERS_OPTIONS = ['All dealers', 'Selected dealers'];
 
@@ -22,72 +23,18 @@ export const CampaignDetailPage: React.FC = () => {
   const activeTab = searchParams.get('tab') || 'campaign';
 
   // Mock data - replace with API call later
+  const campaign = getMockCampaign(campaignId);
   const campaignData = {
-    id: 'SG-001',
-    name: 'Songkran EV Drawdown',
-    code: '24001',
-    quotaRows: 3,
-    rateTiers: 2,
-    units: 2956,
-    freeDays: 15,
-    campaignConditions: [
-      {
-        id: 1,
-        campaign: '24001',
-        range: 'A',
-        model: 'SEALION6',
-        ddStart: '25-04-26',
-        ddEnd: '31-05-26',
-        affectedDealers: 'All dealers',
-      },
-      {
-        id: 2,
-        campaign: '24001',
-        range: 'A',
-        model: 'DOLPHIN',
-        ddStart: '25-04-26',
-        ddEnd: '31-05-26',
-        affectedDealers: 'All dealers',
-      },
-      {
-        id: 3,
-        campaign: '24001',
-        range: 'A',
-        model: 'ATTO3',
-        ddStart: '25-04-26',
-        ddEnd: '31-05-26',
-        affectedDealers: 'All dealers',
-      },
-    ],
-    rateByDayRange: [
-      {
-        id: 1,
-        range: 'A',
-        startDay: 1,
-        endDay: 90,
-        rate: 6.625,
-        plus: '-',
-        effectiveStart: '01-01-25',
-        effectiveEnd: '31-03-25',
-        active: true,
-        deliveryDate: true,
-      },
-      {
-        id: 2,
-        range: 'B',
-        startDay: 91,
-        endDay: 120,
-        rate: 15.000,
-        plus: '-',
-        effectiveStart: '02-04-25',
-        effectiveEnd: '30-04-25',
-        active: true,
-        deliveryDate: true,
-      },
-    ],
+    name: campaign?.name ?? 'Untitled campaign',
+    code: campaign?.code ?? campaignId ?? '',
+    units: campaign?.units ?? 0,
+    freeDays: campaign?.freeDays ?? 0,
+    campaignConditions: campaign?.campaignConditions ?? [],
+    rateByDayRange: campaign?.rateByDayRange ?? [],
   };
 
-  const [conditions, setConditions] = useState(campaignData.campaignConditions);
+  // Read-only detail view — editing happens on the separate /edit-campaign route.
+  const conditions = campaignData.campaignConditions;
 
   const handleTabChange = (tab: string) => {
     setSearchParams({ tab });
@@ -95,7 +42,7 @@ export const CampaignDetailPage: React.FC = () => {
   };
 
   const handleBack = () => {
-    navigate('/');
+    navigate('/?tab=campaign');
   };
 
   const handleEdit = () => {
@@ -137,8 +84,9 @@ export const CampaignDetailPage: React.FC = () => {
                     {campaignData.name}
                   </h1>
                   <p className="mt-1.5 text-sm text-slate-500">
-                    Code {campaignData.code} · {campaignData.quotaRows} quota rows ·{' '}
-                    {campaignData.rateTiers} rate tiers · {campaignData.units.toLocaleString()} units
+                    Code {campaignData.code} · {conditions.length} quota rows ·{' '}
+                    {campaignData.rateByDayRange.length} rate tiers ·{' '}
+                    {campaignData.units.toLocaleString()} units
                   </p>
                 </div>
                 <div className="flex flex-shrink-0 gap-3">
@@ -220,16 +168,7 @@ export const CampaignDetailPage: React.FC = () => {
                           <td className="px-4 py-3 text-slate-900">{condition.ddStart}</td>
                           <td className="px-4 py-3 text-slate-900">{condition.ddEnd}</td>
                           <td className="px-4 py-3 text-slate-900">
-                            <Select
-                              value={condition.affectedDealers}
-                              onValueChange={(value) =>
-                                setConditions((prev) =>
-                                  prev.map((c) =>
-                                    c.id === condition.id ? { ...c, affectedDealers: value } : c
-                                  )
-                                )
-                              }
-                            >
+                            <Select value={condition.affectedDealers} disabled>
                               <SelectTrigger className="h-9 w-40">
                                 <SelectValue />
                               </SelectTrigger>

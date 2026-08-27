@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import React from 'react';
+import { BrowserRouter, Routes, Route, useLocation, useSearchParams } from 'react-router-dom';
 import CampaignManagementPage from './components/Pages/CampaignManagementPage';
 import UploadCalculatePage from './components/Pages/UploadCalculatePage';
 import PreviewARPage from './components/Pages/PreviewARPage';
@@ -9,7 +9,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/Tabs';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
-  const [activeTab, setActiveTab] = useState<'campaign' | 'upload'>('upload');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'campaign' ? 'campaign' : 'upload';
   const isFullPageRoute =
     ['/new-campaign', '/preview-ar'].includes(location.pathname) ||
     location.pathname.startsWith('/campaign-detail/') ||
@@ -27,7 +28,7 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'campaign' | 'upload')}>
+    <Tabs value={activeTab} onValueChange={(value) => setSearchParams({ tab: value })}>
       <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
         <div className="flex items-center justify-center px-4 py-4">
           <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">

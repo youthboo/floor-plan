@@ -1,20 +1,26 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Dialog from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import FileDropzone from './FileDropzone';
 
-interface UploadARModalProps {
+interface UploadSOTModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUpload: (file: File) => void;
 }
 
-export const UploadARModal: React.FC<UploadARModalProps> = ({
+export const UploadSOTModal: React.FC<UploadSOTModalProps> = ({
   isOpen,
   onClose,
   onUpload,
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setSelectedFile(null);
+    }
+  }, [isOpen]);
 
   const handleUpload = () => {
     if (selectedFile) {
@@ -29,14 +35,14 @@ export const UploadARModal: React.FC<UploadARModalProps> = ({
   };
 
   return (
-    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload AR drawdown file" size="xl">
+    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload SOT file" size="xl">
       <div className="space-y-6">
         <p className="text-sm text-slate-600">
-          Wholesale AR drawdown file — the basis for the interest calculation.
+          Stock-on-truck file (optional) — used to enrich the drawdown data.
         </p>
 
         <FileDropzone
-          ariaLabel="Choose AR drawdown file"
+          ariaLabel="Choose SOT file"
           selectedFile={selectedFile}
           onFileSelect={setSelectedFile}
         />
@@ -54,4 +60,4 @@ export const UploadARModal: React.FC<UploadARModalProps> = ({
   );
 };
 
-export default UploadARModal;
+export default UploadSOTModal;
