@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import axios from 'axios';
 import { CalculationResponse } from '../types';
 import { calculationService, CalculationRunConfig } from '../services/api';
+import { getApiErrorMessage } from '../utils/apiError';
 
 interface UseCalculationReturn {
   result: CalculationResponse | null;
@@ -12,15 +12,6 @@ interface UseCalculationReturn {
     options?: { waiveFilePath?: string; runConfig?: CalculationRunConfig }
   ) => Promise<CalculationResponse | null>;
   reset: () => void;
-}
-
-function getErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { error?: string; details?: string } | undefined;
-    return data?.error || err.message || 'Calculation failed';
-  }
-  if (err instanceof Error) return err.message;
-  return 'Calculation failed';
 }
 
 export const useCalculation = (): UseCalculationReturn => {
@@ -47,7 +38,7 @@ export const useCalculation = (): UseCalculationReturn => {
       setResult(data);
       return data;
     } catch (err) {
-      setError(getErrorMessage(err));
+      setError(getApiErrorMessage(err, 'Calculation failed'));
       setResult(null);
       return null;
     } finally {

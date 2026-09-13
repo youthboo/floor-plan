@@ -1,7 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import Dialog from '../ui/Dialog';
-import { Button } from '../ui/Button';
-import FileDropzone from './FileDropzone';
+import React from 'react';
+import FileUploadModal from './FileUploadModal';
 
 interface UploadWaiveModalProps {
   isOpen: boolean;
@@ -15,55 +13,18 @@ export const UploadWaiveModal: React.FC<UploadWaiveModalProps> = ({
   onClose,
   onRecalculate,
   isSubmitting = false,
-}) => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setSelectedFile(null);
-    }
-  }, [isOpen]);
-
-  const handleRecalculate = () => {
-    if (!selectedFile || isSubmitting) return;
-    onRecalculate(selectedFile);
-  };
-
-  const handleClose = () => {
-    if (isSubmitting) return;
-    setSelectedFile(null);
-    onClose();
-  };
-
-  return (
-    <Dialog isOpen={isOpen} onClose={handleClose} title="Upload waive conditions" size="xl">
-      <div className="space-y-6">
-        <p className="text-sm text-slate-600">
-          Choose the waive conditions file, then recalculate to apply it.
-        </p>
-
-        <FileDropzone
-          ariaLabel="Choose waive conditions file"
-          selectedFile={selectedFile}
-          onFileSelect={setSelectedFile}
-          disabled={isSubmitting}
-        />
-
-        <div className="flex justify-end gap-3 pt-4">
-          <Button variant="secondary" onClick={handleClose} disabled={isSubmitting}>
-            Cancel
-          </Button>
-          <Button
-            variant="default"
-            onClick={handleRecalculate}
-            disabled={!selectedFile || isSubmitting}
-          >
-            {isSubmitting ? 'Recalculating...' : 'Recalculate'}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
-  );
-};
+}) => (
+  <FileUploadModal
+    isOpen={isOpen}
+    onClose={onClose}
+    onUpload={onRecalculate}
+    title="Upload waive conditions"
+    description="Choose the waive conditions file, then recalculate to apply it."
+    ariaLabel="Choose waive conditions file"
+    confirmLabel="Recalculate"
+    submittingLabel="Recalculating..."
+    isSubmitting={isSubmitting}
+  />
+);
 
 export default UploadWaiveModal;

@@ -5,6 +5,8 @@ import { cn } from '../../lib/utils';
 interface FileDropzoneProps {
   selectedFile: File | null;
   onFileSelect: (file: File) => void;
+  /** Called instead of onFileSelect when the chosen file's extension isn't in `accept`. */
+  onInvalidFile?: (message: string) => void;
   ariaLabel: string;
   accept?: string;
   disabled?: boolean;
@@ -16,16 +18,32 @@ interface FileDropzoneProps {
 export const FileDropzone: React.FC<FileDropzoneProps> = ({
   selectedFile,
   onFileSelect,
+  onInvalidFile,
   ariaLabel,
-  accept = '.xlsx,.xls,.csv',
+  accept = '.xlsx',
   disabled = false,
   placeholder = 'Choose file',
-  hint = '.xlsx or .csv · click to browse',
+  hint = '.xlsx only · click to browse',
   className,
 }) => {
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) onFileSelect(file);
+    // Reset so selecting the same file again (e.g. after a rejection) still fires onChange.
+    event.target.value = '';
+    if (!file) return;
+
+    const allowedExtensions = accept
+      .split(',')
+      .map((ext) => ext.trim().toLowerCase())
+      .filter(Boolean);
+    const isAllowed = allowedExtensions.some((ext) => file.name.toLowerCase().endsWith(ext));
+
+    if (!isAllowed) {
+      onInvalidFile?.(`Only ${accept} files are accepted.`);
+      return;
+    }
+
+    onFileSelect(file);
   };
 
   return (

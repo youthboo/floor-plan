@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import axios from 'axios';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Input } from '../ui/Input';
@@ -22,6 +21,8 @@ import {
   parseWorkbookFile,
   type WorkbookPreview,
 } from '../../utils/parseWorkbook';
+import { validateARWorkbook } from '../../utils/validateARWorkbook';
+import { getApiErrorMessage } from '../../utils/apiError';
 import { fileService } from '../../services/api';
 import { useCalculation } from '../../hooks/useCalculation';
 import { useConfig } from '../../hooks/useConfig';
@@ -50,6 +51,14 @@ const MONTHS = [
 
 const BASE_YEARS = ['2024', '2025', '2026', '2027'];
 
+/** 3-letter lowercase abbreviation of the month before `month`, e.g. "March" -> "feb". */
+function getPreviousMonthAbbrev(month: string): string | undefined {
+  const index = MONTHS.indexOf(month as (typeof MONTHS)[number]);
+  if (index === -1) return undefined;
+  const previousIndex = (index - 1 + MONTHS.length) % MONTHS.length;
+  return MONTHS[previousIndex].slice(0, 3).toLowerCase();
+}
+
 function getMonthMeta(month: string, year: string) {
   const monthIndex = MONTHS.indexOf(month as (typeof MONTHS)[number]);
   const yearNum = Number(year);
@@ -59,15 +68,6 @@ function getMonthMeta(month: string, year: string) {
     fullMonthDays: days,
     monthEndDate: `${days}-${paddedMonth}-${year}`,
   };
-}
-
-function getUploadErrorMessage(err: unknown): string {
-  if (axios.isAxiosError(err)) {
-    const data = err.response?.data as { error?: string } | undefined;
-    return data?.error || err.message || 'Upload failed';
-  }
-  if (err instanceof Error) return err.message;
-  return 'Upload failed';
 }
 
 export const UploadCalculatePage: React.FC = () => {
@@ -129,14 +129,25 @@ export const UploadCalculatePage: React.FC = () => {
 
     try {
       const preview = await parseWorkbookFile(file);
+      const lastMonthLabel = systemConfig
+        ? getPreviousMonthAbbrev(systemConfig.month)
+        : undefined;
+      const validation = validateARWorkbook(preview, lastMonthLabel);
+
+      if (!validation.valid) {
+        // Reject the new file but keep whatever AR file (if any) was already
+        // uploaded successfully — a bad re-upload must not wipe good state.
+        setPageError(validation.error ?? 'The uploaded file failed validation.');
+        return;
+      }
+
       setArFile(file);
       setWorkbook(preview);
       setUploadedFilePath(null);
       setSotFile(null);
     } catch {
-      setArFile(null);
-      setWorkbook(null);
-      setPageError('Failed to read the uploaded file. Please try a valid .xlsx or .csv file.');
+      // Unreadable file — leave the previous AR upload (if any) in place.
+      setPageError('Failed to read the uploaded file. Please try a valid .xlsx file.');
     } finally {
       setIsParsing(false);
     }
@@ -200,7 +211,7 @@ export const UploadCalculatePage: React.FC = () => {
         setIsEditingConfig(false);
       }
     } catch (err) {
-      setPageError(getUploadErrorMessage(err));
+      setPageError(getApiErrorMessage(err, 'Upload failed'));
       setIsUploading(false);
     }
   };
@@ -236,7 +247,7 @@ export const UploadCalculatePage: React.FC = () => {
         setSuccessMessage('Recalculated with waive conditions applied');
       }
     } catch (err) {
-      setPageError(getUploadErrorMessage(err));
+      setPageError(getApiErrorMessage(err, 'Upload failed'));
     } finally {
       setIsWaiveRecalculating(false);
     }
@@ -253,7 +264,7 @@ export const UploadCalculatePage: React.FC = () => {
     try {
       await fileService.downloadFile(calcResult.outputPath, name);
     } catch (err) {
-      setPageError(getUploadErrorMessage(err));
+      setPageError(getApiErrorMessage(err, 'Upload failed'));
     }
   };
 
