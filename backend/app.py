@@ -3,10 +3,13 @@ FloorPlan Interest Calculator - REST API Backend
 Main Flask application with calculation logic
 """
 
+from __future__ import annotations
+
 import os
-import json
 import traceback
+from typing import Any
 import numpy as np
+from pathlib import Path
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 
@@ -19,16 +22,22 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Alignment
+from openpyxl.worksheet.worksheet import Worksheet
 
 # ============= CONFIG =============
 app = Flask(__name__)
+# Ensures unexpected errors still return JSON, never Werkzeug's debug HTML page.
+app.config['PROPAGATE_EXCEPTIONS'] = False
 CORS(app)
 
-UPLOAD_FOLDER = os.path.join(os.getcwd(), 'uploads')
-OUTPUT_FOLDER = os.path.join(os.getcwd(), 'AR_Outputs')
-OUTPUT_WAIVE_FOLDER = os.path.join(os.getcwd(), 'AR_Outputs - Waive')
-AR_INPUT_FOLDER = os.path.join(os.getcwd(), 'AR_Input')
-CONFIG_PATH = os.path.join(os.getcwd(), 'config', 'Rental_Charge_Conditions_v2.xlsx')
+# Relative to this file, not the process's cwd, so it works regardless of launch directory.
+BASE_DIR = Path(__file__).resolve().parent
+
+UPLOAD_FOLDER = BASE_DIR / 'uploads'
+OUTPUT_FOLDER = BASE_DIR / 'AR_Outputs'
+OUTPUT_WAIVE_FOLDER = BASE_DIR / 'AR_Outputs - Waive'
+AR_INPUT_FOLDER = BASE_DIR / 'AR_Input'
+CONFIG_PATH = BASE_DIR / 'config' / 'Rental_Charge_Conditions_v2.xlsx'
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -37,10 +46,27 @@ os.makedirs(AR_INPUT_FOLDER, exist_ok=True)
 
 WAIVE_REQUIRED_COLUMNS = ['Dealer Code', 'Dealer Name', 'VIN Number', 'waive amount', 'reason', 'approved']
 
+DAYS_PER_YEAR = 365
+# Converts an annual rate% (e.g. 12) directly to a daily amount: price * rate / 100 / 365.
+ANNUAL_RATE_TO_DAILY_DIVISOR = 100 * DAYS_PER_YEAR
+VAT_RATE = 0.07
+RAM_WHT_RATE = 0.03
+DEALER_WHT_RATE = 0.05
+DEALER_CODE_DIGITS = 5
+
+
+class CalculationValidationError(Exception):
+    """Raised when the AR file fails validation (missing sheets, no payment-date column)."""
+
+    def __init__(self, message: str, status_code: int = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 # ============= HELPER FUNCTIONS =============
 
-def clean_nan_values(obj):
+
+def clean_nan_values(obj: Any) -> Any:
     """Convert NaN values to None for JSON serialization"""
     if isinstance(obj, dict):
         return {k: clean_nan_values(v) for k, v in obj.items()}
@@ -51,7 +77,8 @@ def clean_nan_values(obj):
     else:
         return obj
 
-def load_config():
+
+def load_config() -> dict[str, Any]:
     """Load configuration from Excel file"""
     try:
         df_config = pd.read_excel(CONFIG_PATH, sheet_name='Config', engine='openpyxl')
@@ -66,12 +93,14 @@ def load_config():
             'subventions': df_subvention
         }
     except Exception as e:
-        raise Exception(f"Failed to load config: {str(e)}")
+        raise RuntimeError(f"Failed to load config: {str(e)}") from e
 
 
-def resolve_run_period(request_data, excel_config):
+def resolve_run_period(
+    request_data: dict[str, Any], excel_config: dict[str, Any]
+) -> tuple[pd.Timestamp, pd.Timestamp, float, str]:
     """
-    Resolve month_start / month_end / penalty_rate / last_month_label for a
+    Resolve (month_start, month_end, penalty_rate, last_month_label) for a
     calculation run. Prefer values from the UI request; fall back to Excel
     Config sheet.
     """
@@ -106,7 +135,9 @@ def resolve_run_period(request_data, excel_config):
     return month_start, month_end, penalty_rate, last_month_label
 
 
-def locate_ar_sheets(sheet_names, last_month_label):
+def locate_ar_sheets(
+    sheet_names: list[str], last_month_label: str
+) -> tuple[str | None, str | None, str | None, str | None]:
     """Find the AR Last Month / New Volume / All Payment / Penalty sheet names by pattern."""
     sheet_last = next((s for s in sheet_names if last_month_label in s.lower()), None)
     sheet_new = next((s for s in sheet_names if 'new' in s.lower()), None)
@@ -115,7 +146,7 @@ def locate_ar_sheets(sheet_names, last_month_label):
     return sheet_last, sheet_new, sheet_all, sheet_penalty
 
 
-def load_penalty_sheet(xls, sheet_penalty):
+def load_penalty_sheet(xls: pd.ExcelFile, sheet_penalty: str | None) -> pd.DataFrame:
     """Load and standardize the optional penalty sheet (VIN Number, Due Date)."""
     df_penalty = pd.DataFrame(columns=['VIN Number', 'Due Date'])
     if sheet_penalty:
@@ -128,7 +159,7 @@ def load_penalty_sheet(xls, sheet_penalty):
     return df_penalty
 
 
-def prepare_ar_data(df_ar, source_name):
+def prepare_ar_data(df_ar: pd.DataFrame, source_name: str) -> pd.DataFrame:
     """Prepare and standardize AR data"""
     df = df_ar.copy()
     df.columns = df.columns.astype(str).str.strip()
@@ -163,14 +194,8 @@ def prepare_ar_data(df_ar, source_name):
     return df
 
 
-def prepare_rate_ranges(rate_ranges):
-    """
-    Pre-parse each rate range's EffectiveStart/EffectiveEnd to datetime once.
-    calculate_detailed_charge() looks up a matching rate for every day of
-    every VIN, so parsing these up front (instead of re-parsing them on every
-    day x rate-range comparison inside that loop) avoids a lot of repeated
-    pd.to_datetime() calls over a large AR file.
-    """
+def prepare_rate_ranges(rate_ranges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pre-parse EffectiveStart/EffectiveEnd once, since find_rate_for_day() runs per day per VIN."""
     prepared = []
     for r in rate_ranges:
         r = dict(r)
@@ -180,16 +205,11 @@ def prepare_rate_ranges(rate_ranges):
     return prepared
 
 
-def find_rate_for_day(rate_ranges, day_count, date):
-    """
-    Find the rate range applicable to a given aging day-count and calendar
-    date. Ties (multiple matching ranges) are broken by the latest
-    EffectiveStart. Returns None if no range matches.
-
-    `rate_ranges` must have EffectiveStart/EffectiveEnd already parsed to
-    datetime (see prepare_rate_ranges) — this is called per-day, so it must
-    not re-parse them itself.
-    """
+def find_rate_for_day(
+    rate_ranges: list[dict[str, Any]], day_count: int, date: pd.Timestamp
+) -> dict[str, Any] | None:
+    """Find the rate range matching a day-count/date; ties broken by latest EffectiveStart.
+    rate_ranges must already have EffectiveStart/EffectiveEnd parsed to datetime."""
     applicable_rates = [
         r for r in rate_ranges
         if r['StartDay'] <= day_count <= r['EndDay']
@@ -201,7 +221,13 @@ def find_rate_for_day(rate_ranges, day_count, date):
     return max(applicable_rates, key=lambda r: r['EffectiveStart'])
 
 
-def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_rate):
+def calculate_detailed_charge(
+    row: pd.Series,
+    rate_ranges: list[dict[str, Any]],
+    month_start: pd.Timestamp,
+    month_end: pd.Timestamp,
+    penalty_rate: float,
+) -> pd.Series:
     """Calculate detailed charges for a single vehicle"""
     price = float(row.get('Price (Ex. Vat)', 0))
     alloc_date = pd.to_datetime(row['Allocation Date'], errors='coerce')
@@ -216,7 +242,7 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
     free_day_actual_end = alloc_date + timedelta(days=free_days - 1)
     last_free_day = min(free_day_actual_end, month_end)
     ram_charge_days = pd.date_range(alloc_date, last_free_day, freq='D')
-    ram_charge_freeday_days_this_month = sum([(month_start <= d <= month_end) for d in ram_charge_days])
+    ram_charge_freeday_days_this_month = sum(month_start <= d <= month_end for d in ram_charge_days)
 
     ram_charge = 0.0
     ram_desc = {}
@@ -226,7 +252,7 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
         rate_rec = find_rate_for_day(rate_ranges, day_count, d)
 
         if month_start <= d <= month_end and rate_rec:
-            daily_interest = (price * float(rate_rec['Rate'])) / 36500
+            daily_interest = (price * float(rate_rec['Rate'])) / ANNUAL_RATE_TO_DAILY_DIVISOR
             ram_charge += daily_interest
             rate_key = f"{rate_rec['StartDay']}-{rate_rec['EndDay']} @ {rate_rec['Rate']}%"
             ram_desc[rate_key] = ram_desc.get(rate_key, 0) + 1
@@ -241,7 +267,7 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
         rate_rec = find_rate_for_day(rate_ranges, day_count, d)
 
         if rate_rec:
-            daily_interest = (price * float(rate_rec['Rate'])) / 36500
+            daily_interest = (price * float(rate_rec['Rate'])) / ANNUAL_RATE_TO_DAILY_DIVISOR
             ram_charge_actual += daily_interest
 
     # ====== DEALER CHARGE ======
@@ -263,7 +289,7 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
             rate_rec = find_rate_for_day(rate_ranges, day_count, d)
 
             if month_start <= d <= month_end and rate_rec:
-                daily_interest = (price * float(rate_rec['Rate'])) / 36500
+                daily_interest = (price * float(rate_rec['Rate'])) / ANNUAL_RATE_TO_DAILY_DIVISOR
                 dealer_charge += daily_interest
                 rate_key = f"{rate_rec['StartDay']}-{rate_rec['EndDay']} @ {rate_rec['Rate']}%"
                 dealer_desc[rate_key] = dealer_desc.get(rate_key, 0) + 1
@@ -275,10 +301,10 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
 
         if penalty_start <= penalty_end:
             penalty_days = pd.date_range(penalty_start, penalty_end, freq='D')
-            penalty_day_count = sum([1 for d in penalty_days if month_start <= d <= month_end])
+            penalty_day_count = sum(1 for d in penalty_days if month_start <= d <= month_end)
 
             if penalty_day_count > 0:
-                daily_penalty = (price * penalty_rate) / 36500
+                daily_penalty = (price * penalty_rate) / ANNUAL_RATE_TO_DAILY_DIVISOR
                 penalty_charge = daily_penalty * penalty_day_count
                 dealer_desc['Penalty'] = penalty_day_count
 
@@ -307,7 +333,13 @@ def calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_
     ])
 
 
-def create_excel_output(df_ar, df_summary, df_rental_summary, month_end, is_waive=False):
+def create_excel_output(
+    df_ar: pd.DataFrame,
+    df_summary: pd.DataFrame,
+    df_rental_summary: pd.DataFrame,
+    month_end: pd.Timestamp,
+    is_waive: bool = False,
+) -> str:
     """Create Excel workbook with summary, detail, and dealer summary sheets"""
     wb = Workbook()
 
@@ -341,7 +373,7 @@ def create_excel_output(df_ar, df_summary, df_rental_summary, month_end, is_waiv
         ws_dealer_summary.append(r)
 
     # ===== Format Tables =====
-    def add_table(ws, table_name):
+    def add_table(ws: Worksheet, table_name: str) -> None:
         if ws.max_row > 0:
             last_col = ws.max_column
             last_row = ws.max_row
@@ -351,7 +383,7 @@ def create_excel_output(df_ar, df_summary, df_rental_summary, month_end, is_waiv
             tab.tableStyleInfo = style
             ws.add_table(tab)
 
-    def format_currency_column(ws, col_name):
+    def format_currency_column(ws: Worksheet, col_name: str) -> None:
         for cell in ws[1]:
             if cell.value == col_name:
                 col_letter = cell.column_letter
@@ -392,11 +424,13 @@ def create_excel_output(df_ar, df_summary, df_rental_summary, month_end, is_waiv
     return filepath
 
 
-def append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary):
+def append_dealer_summary_totals(
+    df_rental_summary: pd.DataFrame, df_dealer_summary: pd.DataFrame, df_ram_summary: pd.DataFrame
+) -> pd.DataFrame:
     """Append 'Total Charge to Dealer' / 'Total RAM Rever Automotive' grand-total rows"""
     sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
 
-    def total_row(label, df_group):
+    def total_row(label: str, df_group: pd.DataFrame) -> pd.Series:
         sums = df_group[sum_cols].sum() if len(df_group) > 0 else pd.Series(0.0, index=sum_cols)
         return pd.Series({
             'Dealer Group': '',
@@ -413,53 +447,39 @@ def append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_su
     return pd.concat([df_rental_summary, totals], ignore_index=True)
 
 
-def _run_calculation_pipeline(
-    ar_file_path, config_data, month_start, month_end, penalty_rate, last_month_label,
-    waive_file_path=None
-):
-    """
-    Shared AR calculation pipeline for both /api/calculate (Pre-Waive, Run 1)
-    and /api/calculate-with-waive (Post-Waive, Run 2). Pass waive_file_path to
-    run the Post-Waive pipeline; omit it (None) to run Pre-Waive.
+def _load_waive_dataframe(waive_file_path: str) -> pd.DataFrame:
+    """Load the waive file and keep only approved (Y) rows."""
+    df_waive = pd.read_excel(waive_file_path)
+    df_waive['Dealer Code'] = df_waive['Dealer Code'].astype(str).str.strip()
+    df_waive['VIN Number'] = df_waive['VIN Number'].astype(str).str.strip()
+    df_waive = df_waive[df_waive['approved'].astype(str).str.upper() == 'Y']
+    df_waive['waive amount'] = df_waive['waive amount'].fillna(0)
+    return df_waive
 
-    Returns (response_payload, error_body, status_code):
-      - On success: (payload_dict, None, None) — caller does jsonify(payload_dict).
-      - On a validation failure: (None, error_dict, status_code).
 
-    Preserves each endpoint's original validation strictness exactly as it was
-    before the two routes were merged — Pre-Waive validates the AR sheets were
-    found and the payment-date column exists; Post-Waive does neither (this
-    matches the pre-refactor code, quirks included).
-    """
-    is_waive_run = waive_file_path is not None
-
-    df_waive = None
-    if is_waive_run:
-        df_waive = pd.read_excel(waive_file_path)
-        df_waive['Dealer Code'] = df_waive['Dealer Code'].astype(str).str.strip()
-        df_waive['VIN Number'] = df_waive['VIN Number'].astype(str).str.strip()
-        df_waive = df_waive[df_waive['approved'].astype(str).str.upper() == 'Y']
-        df_waive['waive amount'] = df_waive['waive amount'].fillna(0)
-
-    # Load AR file
+def _load_ar_dataframe(
+    ar_file_path: str,
+    last_month_label: str,
+    is_waive_run: bool,
+    df_waive: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Load the AR Last Month / New Volume / All Payment / Penalty sheets, merge them
+    into one dataframe, and merge in waive amounts when df_waive is given."""
     xls = pd.ExcelFile(ar_file_path, engine='openpyxl')
     sheet_names = xls.sheet_names
 
     sheet_last, sheet_new, sheet_all, sheet_penalty = locate_ar_sheets(sheet_names, last_month_label)
 
     if not is_waive_run and not all([sheet_last, sheet_new, sheet_all]):
-        return None, {'error': 'Missing required sheets'}, 400
+        raise CalculationValidationError('Missing required sheets')
 
-    # Read sheets
     df_ar_lastmonth = xls.parse(sheet_last, header=1)
     df_new_volume = xls.parse(sheet_new, header=1)
     df_all_payment = xls.parse(sheet_all, header=1)
 
-    # Prepare data
     df_ar_lastmonth = prepare_ar_data(df_ar_lastmonth, 'AR Last Month')
     df_new_volume = prepare_ar_data(df_new_volume, 'New Volume')
 
-    # Prepare payment data
     df_all_payment.columns = df_all_payment.columns.astype(str).str.strip()
     if is_waive_run:
         payment_date_col = 'Payment Date' if 'Payment Date' in df_all_payment.columns else 'Date'
@@ -468,15 +488,13 @@ def _run_calculation_pipeline(
             'Date' if 'Date' in df_all_payment.columns else None
         )
         if not payment_date_col:
-            return None, {'error': 'Payment date column not found'}, 400
+            raise CalculationValidationError('Payment date column not found')
 
     df_all_payment = df_all_payment[['VIN No.', payment_date_col]].copy()
     df_all_payment.rename(columns={'VIN No.': 'VIN Number', payment_date_col: 'Payment Date'}, inplace=True)
 
-    # Prepare penalty data
     df_penalty = load_penalty_sheet(xls, sheet_penalty)
 
-    # Merge data
     df_ar_current = pd.concat([df_new_volume, df_ar_lastmonth], ignore_index=True)
     df_ar_current['Subvention Campaign'] = df_ar_current['Subvention Campaign'].fillna('Normal').replace('', 'Normal')
     df_ar_current = df_ar_current[~(df_ar_current['Dealer Group'].isna() | (df_ar_current['Dealer Group'].astype(str).str.strip() == ''))]
@@ -494,7 +512,19 @@ def _run_calculation_pipeline(
         df_ar_current['waive amount'] = df_ar_current['waive amount'].fillna(0)
         df_ar_current['reason'] = df_ar_current['reason'].fillna('')
 
-    # Load rates and subventions
+    return df_ar_current
+
+
+def _calculate_charges(
+    df_ar_current: pd.DataFrame,
+    config_data: dict[str, Any],
+    month_start: pd.Timestamp,
+    month_end: pd.Timestamp,
+    penalty_rate: float,
+    is_waive_run: bool,
+) -> pd.DataFrame:
+    """Run calculate_detailed_charge() over every row, then derive the
+    After-Waive / AR Master Code columns."""
     df_rate = config_data['rates'].copy()
     df_rate.columns = df_rate.columns.str.strip()
     df_rate.rename(columns={'Start Day': 'StartDay', 'End Day': 'EndDay', 'Rate (%)': 'Rate'}, inplace=True)
@@ -506,7 +536,6 @@ def _run_calculation_pipeline(
     subvention_map = df_subvention.set_index('Campaign Name')['Free Days'].to_dict()
     df_ar_current['Free Days'] = df_ar_current['Subvention Campaign'].map(subvention_map).fillna(0).astype(int)
 
-    # Calculate charges
     df_ar_current[[
         'RAM Charge', 'RAM Charge (bf)', 'Dealer Charge',
         'RAM Charge FreeDay (This Month)', 'RAM Rate Summary',
@@ -516,8 +545,7 @@ def _run_calculation_pipeline(
         axis=1
     )
 
-    # Format and calculate post-charges
-    df_ar_current['Dealer Code'] = df_ar_current['Dealer Code'].astype(str).str.zfill(5)
+    df_ar_current['Dealer Code'] = df_ar_current['Dealer Code'].astype(str).str.zfill(DEALER_CODE_DIGITS)
     df_ar_current['Contract Number'] = df_ar_current['Contract Number'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
 
     if is_waive_run:
@@ -527,22 +555,27 @@ def _run_calculation_pipeline(
             lambda x: 'RAM Rever Automotive' if x == 0 else 'Charge to Dealer'
         )
     else:
-        # Pre-Waive run: no waive file yet, so 'waive amount' / 'reason' /
-        # 'RAM Charge (After Waive)' / 'Dealer Charge (After Waive)' must not
-        # exist on the output (spec 3.3.7) — bucket split below uses the base
-        # RAM/Dealer Charge directly instead.
+        # Pre-Waive: no waive columns should exist yet (spec 3.3.7).
         df_ar_current['AR Master Code'] = df_ar_current['Dealer Charge'].apply(
             lambda x: 'RAM Rever Automotive' if x == 0 else 'Charge to Dealer'
         )
 
-    # Stats + distribution (numeric, before display formatting)
-    rows_processed = int(len(df_ar_current))
-    total_ram_charge = float(pd.to_numeric(df_ar_current['RAM Charge'], errors='coerce').fillna(0).sum())
-    total_dealer_charge = float(pd.to_numeric(df_ar_current['Dealer Charge'], errors='coerce').fillna(0).sum())
-    total_waive = (
-        float(pd.to_numeric(df_ar_current['waive amount'], errors='coerce').fillna(0).sum())
-        if is_waive_run else None
-    )
+    return df_ar_current
+
+
+def _build_stats_and_distributions(
+    df_ar_current: pd.DataFrame, is_waive_run: bool
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Compute the stats block, campaign distribution, and summary-by-dealer-code —
+    all read numeric charge columns, so this must run before export formatting."""
+    stats: dict[str, Any] = {
+        'rowsProcessed': int(len(df_ar_current)),
+        'totalRamCharge': float(pd.to_numeric(df_ar_current['RAM Charge'], errors='coerce').fillna(0).sum()),
+        'totalDealerCharge': float(pd.to_numeric(df_ar_current['Dealer Charge'], errors='coerce').fillna(0).sum()),
+        'mismatchCount': 0,
+    }
+    if is_waive_run:
+        stats['totalWaive'] = float(pd.to_numeric(df_ar_current['waive amount'], errors='coerce').fillna(0).sum())
 
     campaign_counts = (
         df_ar_current.assign(**{
@@ -581,7 +614,11 @@ def _run_calculation_pipeline(
         for _, row in summary_by_dealer.iterrows()
     ]
 
-    # Calculate summary (from numeric price before formatting)
+    return stats, campaign_distribution, summary_by_dealer_code
+
+
+def _build_price_summary(df_ar_current: pd.DataFrame) -> tuple[dict[str, float], pd.DataFrame]:
+    """Build the Summary sheet's price-category totals (numeric dict + display dataframe)."""
     price_numeric = pd.to_numeric(df_ar_current['Price (Ex. Vat)'], errors='coerce').fillna(0)
     summary = {
         'AR Last Month': float(price_numeric[df_ar_current['Source'] == 'AR Last Month'].sum()),
@@ -594,14 +631,19 @@ def _run_calculation_pipeline(
     summary_df = pd.DataFrame.from_dict(summary, orient='index', columns=['Amount (THB)'])
     summary_df['Amount (THB)'] = summary_df['Amount (THB)'].map('{:,.2f}'.format)
 
-    # Calculate dealer summary (numeric, before formatting)
-    df_rental = df_ar_current.copy()
+    return summary, summary_df
+
+
+def _build_dealer_summary(df_ar_current: pd.DataFrame, is_waive_run: bool) -> pd.DataFrame:
+    """Split RAM/Dealer buckets, apply WHT/VAT, group by dealer, and append grand totals."""
     ram_amount_col = 'RAM Charge (After Waive)' if is_waive_run else 'RAM Charge'
     dealer_amount_col = 'Dealer Charge (After Waive)' if is_waive_run else 'Dealer Charge'
-    df_ram = df_rental[df_rental[ram_amount_col] > 0].copy()
-    df_dealer = df_rental[df_rental[dealer_amount_col] > 0].copy()
+    df_ram = df_ar_current[df_ar_current[ram_amount_col] > 0].copy()
+    df_dealer = df_ar_current[df_ar_current[dealer_amount_col] > 0].copy()
 
-    def create_dealer_summary(df_group, ar_code, amount_col, wht_rate):
+    def create_dealer_summary(
+        df_group: pd.DataFrame, ar_code: str, amount_col: str, wht_rate: float
+    ) -> pd.DataFrame:
         df_group = df_group.copy()
         df_group['AR Master Code'] = ar_code
         df_group['Amount per calculation'] = df_group[amount_col]
@@ -610,7 +652,7 @@ def _run_calculation_pipeline(
             if is_waive_run else 0.0
         )
         df_group['WHT'] = df_group['Amount per calculation'] * wht_rate
-        df_group['VAT'] = df_group['Amount per calculation'] * 0.07
+        df_group['VAT'] = df_group['Amount per calculation'] * VAT_RATE
         df_group['Total Receivable'] = df_group['Amount per calculation'] - df_group['WHT'] + df_group['VAT']
         df_group['Total'] = df_group['Amount per calculation'] + df_group['VAT']
 
@@ -619,8 +661,8 @@ def _run_calculation_pipeline(
             'Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total'
         ]]
 
-    df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', ram_amount_col, 0.03)
-    df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', dealer_amount_col, 0.05)
+    df_ram_summary = create_dealer_summary(df_ram, 'RAM Rever Automotive', ram_amount_col, RAM_WHT_RATE)
+    df_dealer_summary = create_dealer_summary(df_dealer, 'Charge to Dealer', dealer_amount_col, DEALER_WHT_RATE)
 
     group_cols = ['Dealer Group', 'Dealer Code', 'Dealer Name', 'AR Master Code']
     sum_cols = ['Amount per calculation', 'Waive', 'WHT', 'VAT', 'Total Receivable', 'Total']
@@ -635,9 +677,14 @@ def _run_calculation_pipeline(
         df_dealer_summary = df_dealer_summary.groupby(group_cols, as_index=False)[sum_cols].sum()
 
     df_rental_summary = pd.concat([df_dealer_summary, df_ram_summary], ignore_index=True)
-    df_rental_summary = append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary)
+    return append_dealer_summary_totals(df_rental_summary, df_dealer_summary, df_ram_summary)
 
-    # Format dates and currency for export / detail preview
+
+def _format_ar_detail_for_export(
+    df_ar_current: pd.DataFrame, month_end: pd.Timestamp, is_waive_run: bool
+) -> pd.DataFrame:
+    """Format date/currency columns for the AR Detail sheet and API response. Must run
+    last — every other step above needs these columns as numbers, not display strings."""
     df_ar_current['Allocation Date'] = pd.to_datetime(df_ar_current['Allocation Date'], errors='coerce').dt.strftime('%d/%m/%Y')
     df_ar_current['Payment Date'] = pd.to_datetime(df_ar_current['Payment Date'], errors='coerce').fillna(month_end).dt.strftime('%d/%m/%Y')
     df_ar_current['Due Date'] = pd.to_datetime(df_ar_current['Due Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
@@ -652,19 +699,46 @@ def _run_calculation_pipeline(
         df_ar_current['RAM Charge (After Waive)'] = df_ar_current['RAM Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
         df_ar_current['Dealer Charge (After Waive)'] = df_ar_current['Dealer Charge (After Waive)'].astype(float).map('{:,.2f}'.format)
 
-    # Create Excel file
+    return df_ar_current
+
+
+def _run_calculation_pipeline(
+    ar_file_path: str,
+    config_data: dict[str, Any],
+    month_start: pd.Timestamp,
+    month_end: pd.Timestamp,
+    penalty_rate: float,
+    last_month_label: str,
+    waive_file_path: str | None = None,
+) -> dict[str, Any]:
+    """
+    Shared pipeline for /api/calculate (Pre-Waive) and /api/calculate-with-waive
+    (Post-Waive) — pass waive_file_path to run Post-Waive.
+
+    Returns the payload dict, or raises CalculationValidationError.
+
+    Note: only Pre-Waive validates the AR sheets/payment-date column; this
+    asymmetry is intentional (preserved from before the two routes were merged).
+    """
+    is_waive_run = waive_file_path is not None
+    df_waive = _load_waive_dataframe(waive_file_path) if is_waive_run else None
+
+    df_ar_current = _load_ar_dataframe(ar_file_path, last_month_label, is_waive_run, df_waive)
+    df_ar_current = _calculate_charges(
+        df_ar_current, config_data, month_start, month_end, penalty_rate, is_waive_run
+    )
+
+    stats, campaign_distribution, summary_by_dealer_code = _build_stats_and_distributions(
+        df_ar_current, is_waive_run
+    )
+    summary, summary_df = _build_price_summary(df_ar_current)
+    df_rental_summary = _build_dealer_summary(df_ar_current, is_waive_run)
+
+    df_ar_current = _format_ar_detail_for_export(df_ar_current, month_end, is_waive_run)
+
     output_path = create_excel_output(df_ar_current, summary_df, df_rental_summary, month_end, is_waive=is_waive_run)
 
-    stats = {
-        'rowsProcessed': rows_processed,
-        'totalRamCharge': total_ram_charge,
-        'totalDealerCharge': total_dealer_charge,
-        'mismatchCount': 0,
-    }
-    if is_waive_run:
-        stats['totalWaive'] = total_waive
-
-    response_payload = clean_nan_values({
+    return clean_nan_values({
         'success': True,
         'message': 'Recalculated with waive conditions applied' if is_waive_run else 'Calculation completed',
         'outputPath': output_path,
@@ -677,138 +751,133 @@ def _run_calculation_pipeline(
         'dealerSummary': df_rental_summary.to_dict('records'),
     })
 
-    return response_payload, None, None
-
 
 # ============= API ENDPOINTS =============
+
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(error: Exception):
+    """Catch-all JSON error response for routes without their own try/except."""
+    return jsonify({'error': str(error)}), 400
+
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
     """Get configuration, rates, and subventions"""
+    config_data = load_config()
+    config = config_data['config']
+
+    month_end = pd.to_datetime(config.get('Month End Date'), dayfirst=True, errors='coerce')
+    if pd.isna(month_end):
+        return jsonify({'error': 'Invalid Month End Date in config'}), 400
+
+    full_month_days = config.get('Full Month Days')
+    if full_month_days is None or (isinstance(full_month_days, float) and pd.isna(full_month_days)):
+        full_month_days = int(month_end.days_in_month)
+    else:
+        full_month_days = int(full_month_days)
+
+    penalty_rate = config.get('Penalty Rate', 15)
     try:
-        config_data = load_config()
-        config = config_data['config']
+        penalty_rate = float(penalty_rate)
+    except (TypeError, ValueError):
+        penalty_rate = 15.0
 
-        month_end = pd.to_datetime(config.get('Month End Date'), dayfirst=True, errors='coerce')
-        if pd.isna(month_end):
-            return jsonify({'error': 'Invalid Month End Date in config'}), 400
+    result = {
+        'config': {
+            'monthEndDate': month_end.strftime('%d-%m-%Y'),
+            'fullMonthDays': full_month_days,
+            'penaltyRate': penalty_rate,
+            'month': month_end.strftime('%B'),
+            'year': str(month_end.year),
+        },
+        'rates': config_data['rates'].to_dict('records'),
+        'subventions': config_data['subventions'].to_dict('records')
+    }
 
-        full_month_days = config.get('Full Month Days')
-        if full_month_days is None or (isinstance(full_month_days, float) and pd.isna(full_month_days)):
-            full_month_days = int(month_end.days_in_month)
-        else:
-            full_month_days = int(full_month_days)
-
-        penalty_rate = config.get('Penalty Rate', 15)
-        try:
-            penalty_rate = float(penalty_rate)
-        except (TypeError, ValueError):
-            penalty_rate = 15.0
-
-        result = {
-            'config': {
-                'monthEndDate': month_end.strftime('%d-%m-%Y'),
-                'fullMonthDays': full_month_days,
-                'penaltyRate': penalty_rate,
-                'month': month_end.strftime('%B'),
-                'year': str(month_end.year),
-            },
-            'rates': config_data['rates'].to_dict('records'),
-            'subventions': config_data['subventions'].to_dict('records')
-        }
-
-        result = clean_nan_values(result)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    result = clean_nan_values(result)
+    return jsonify(result)
 
 
 @app.route('/api/upload', methods=['POST'])
 def upload_ar():
     """Upload and preview AR file"""
-    try:
-        if 'ar_file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
+    if 'ar_file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
 
-        file = request.files['ar_file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
+    file = request.files['ar_file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
 
-        filename = secure_filename(file.filename)
-        filepath = os.path.join(UPLOAD_FOLDER, filename)
-        file.save(filepath)
+    filename = secure_filename(file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(filepath)
 
-        xls = pd.ExcelFile(filepath, engine='openpyxl')
-        sheet_names = xls.sheet_names
+    xls = pd.ExcelFile(filepath, engine='openpyxl')
+    sheet_names = xls.sheet_names
 
-        preview_tables = {}
-        record_counts = {}
+    preview_tables = {}
+    record_counts = {}
 
-        for sheet in sheet_names:
-            try:
-                header = 0 if 'penalty' in sheet.lower() else 1
-                df = pd.read_excel(xls, sheet_name=sheet, header=header)
-                preview_tables[sheet] = df.head(5).to_html(classes='table table-sm', index=False)
-                record_counts[sheet] = int(len(df))
-            except:
-                preview_tables[sheet] = '<p>Error reading sheet</p>'
-                record_counts[sheet] = 0
+    for sheet in sheet_names:
+        try:
+            header = 0 if 'penalty' in sheet.lower() else 1
+            df = pd.read_excel(xls, sheet_name=sheet, header=header)
+            preview_tables[sheet] = df.head(5).to_html(classes='table table-sm', index=False)
+            record_counts[sheet] = int(len(df))
+        except Exception:
+            preview_tables[sheet] = '<p>Error reading sheet</p>'
+            record_counts[sheet] = 0
 
-        return jsonify({
-            'fileName': filename,
-            'filePath': filepath,
-            'sheetNames': sheet_names,
-            'previewTables': preview_tables,
-            'recordCounts': record_counts
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    return jsonify({
+        'fileName': filename,
+        'filePath': filepath,
+        'sheetNames': sheet_names,
+        'previewTables': preview_tables,
+        'recordCounts': record_counts
+    })
 
 
 @app.route('/api/upload-waive', methods=['POST'])
 def upload_waive():
     """Upload and preview waive file"""
-    filepath = None
-    try:
-        if 'waive_file' not in request.files:
-            return jsonify({'error': 'No file provided'}), 400
+    if 'waive_file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
 
-        file = request.files['waive_file']
-        if file.filename == '':
-            return jsonify({'error': 'No file selected'}), 400
+    file = request.files['waive_file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
 
-        if not file.filename.lower().endswith('.xlsx'):
-            return jsonify({'error': 'Only .xlsx files are accepted for the waive file'}), 400
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify({'error': 'Only .xlsx files are accepted for the waive file'}), 400
 
-        filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"waive_input_{timestamp}.xlsx"
-        filepath = os.path.join(AR_INPUT_FOLDER, filename)
-        file.save(filepath)
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"waive_input_{timestamp}.xlsx"
+    filepath = os.path.join(AR_INPUT_FOLDER, filename)
+    file.save(filepath)
 
-        df = pd.read_excel(filepath)
-        df.columns = df.columns.astype(str).str.strip()
+    df = pd.read_excel(filepath)
+    df.columns = df.columns.astype(str).str.strip()
 
-        missing_columns = [col for col in WAIVE_REQUIRED_COLUMNS if col not in df.columns]
-        if missing_columns:
-            os.remove(filepath)
-            return jsonify({
-                'error': f"Waive file is missing required column(s): {', '.join(missing_columns)}"
-            }), 400
-
-        preview_table = df.head(5).to_html(classes='table table-sm', index=False)
-        approved_count = len(df[df['approved'].astype(str).str.upper() == 'Y'])
-
+    missing_columns = [col for col in WAIVE_REQUIRED_COLUMNS if col not in df.columns]
+    if missing_columns:
+        os.remove(filepath)
         return jsonify({
-            'fileName': filename,
-            'filePath': filepath,
-            'sheetNames': ['Waive Data'],
-            'previewTables': {'Waive Data': preview_table},
-            'recordCounts': {'Waive Data': len(df)},
-            'approvedCount': approved_count
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+            'error': f"Waive file is missing required column(s): {', '.join(missing_columns)}"
+        }), 400
+
+    preview_table = df.head(5).to_html(classes='table table-sm', index=False)
+    approved_count = len(df[df['approved'].astype(str).str.upper() == 'Y'])
+
+    return jsonify({
+        'fileName': filename,
+        'filePath': filepath,
+        'sheetNames': ['Waive Data'],
+        'previewTables': {'Waive Data': preview_table},
+        'recordCounts': {'Waive Data': len(df)},
+        'approvedCount': approved_count
+    })
 
 
 @app.route('/api/calculate', methods=['POST'])
@@ -826,13 +895,12 @@ def calculate():
         config = config_data['config']
         month_start, month_end, penalty_rate, last_month_label = resolve_run_period(data, config)
 
-        payload, error_body, status = _run_calculation_pipeline(
+        payload = _run_calculation_pipeline(
             file_path, config_data, month_start, month_end, penalty_rate, last_month_label
         )
-        if error_body is not None:
-            return jsonify(error_body), status
-
         return jsonify(payload)
+    except CalculationValidationError as e:
+        return jsonify({'error': str(e)}), e.status_code
     except Exception as e:
         return jsonify({'error': str(e), 'details': traceback.format_exc()}), 400
 
@@ -856,14 +924,13 @@ def calculate_with_waive():
         config = config_data['config']
         month_start, month_end, penalty_rate, last_month_label = resolve_run_period(data, config)
 
-        payload, error_body, status = _run_calculation_pipeline(
+        payload = _run_calculation_pipeline(
             ar_file_path, config_data, month_start, month_end, penalty_rate, last_month_label,
             waive_file_path=waive_file_path
         )
-        if error_body is not None:
-            return jsonify(error_body), status
-
         return jsonify(payload)
+    except CalculationValidationError as e:
+        return jsonify({'error': str(e)}), e.status_code
     except Exception as e:
         return jsonify({'error': str(e), 'details': traceback.format_exc()}), 400
 
@@ -871,14 +938,11 @@ def calculate_with_waive():
 @app.route('/api/download', methods=['GET'])
 def download():
     """Download generated Excel file"""
-    try:
-        file_path = request.args.get('filePath')
-        if not file_path or not os.path.exists(file_path):
-            return jsonify({'error': 'File not found'}), 404
+    file_path = request.args.get('filePath')
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 404
 
-        return send_file(file_path, as_attachment=True)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    return send_file(file_path, as_attachment=True)
 
 
 if __name__ == '__main__':
