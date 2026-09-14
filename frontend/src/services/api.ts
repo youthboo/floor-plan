@@ -5,6 +5,9 @@ import {
   CalculationResponse,
   WaiveUploadResponse,
   ApiError,
+  CampaignDetail,
+  CampaignSummary,
+  CampaignImportResult,
 } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:5001/api';
@@ -65,6 +68,16 @@ export const fileService = {
     return response.data;
   },
 
+  uploadSOT: async (file: File): Promise<FileUploadResponse> => {
+    const formData = new FormData();
+    formData.append('sot_file', file);
+
+    const response = await apiClient.post<FileUploadResponse>('/upload-sot', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
   downloadFile: async (filePath: string, fileName: string): Promise<void> => {
     const response = await apiClient.get('/download', {
       params: { filePath },
@@ -92,10 +105,12 @@ export interface CalculationRunConfig {
 export const calculationService = {
   calculate: async (
     filePath: string,
-    runConfig?: CalculationRunConfig
+    runConfig?: CalculationRunConfig,
+    sotFilePath?: string
   ): Promise<CalculationResponse> => {
     const response = await apiClient.post<CalculationResponse>('/calculate', {
       filePath,
+      ...(sotFilePath ? { sotFilePath } : {}),
       ...(runConfig ?? {}),
     });
     return response.data;
@@ -104,13 +119,48 @@ export const calculationService = {
   calculateWithWaive: async (
     arFilePath: string,
     waiveFilePath: string,
-    runConfig?: CalculationRunConfig
+    runConfig?: CalculationRunConfig,
+    sotFilePath?: string
   ): Promise<CalculationResponse> => {
     const response = await apiClient.post<CalculationResponse>('/calculate-with-waive', {
       arFilePath,
       waiveFilePath,
+      ...(sotFilePath ? { sotFilePath } : {}),
       ...(runConfig ?? {}),
     });
+    return response.data;
+  },
+};
+
+// ============= CAMPAIGN ENDPOINTS =============
+export const campaignService = {
+  list: async (): Promise<CampaignSummary[]> => {
+    const response = await apiClient.get<CampaignSummary[]>('/campaigns');
+    return response.data;
+  },
+
+  get: async (code: string): Promise<CampaignDetail> => {
+    const response = await apiClient.get<CampaignDetail>(`/campaigns/${encodeURIComponent(code)}`);
+    return response.data;
+  },
+
+  importFile: async (file: File): Promise<CampaignImportResult> => {
+    const formData = new FormData();
+    formData.append('campaign_file', file);
+
+    const response = await apiClient.post<CampaignImportResult>('/campaigns/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+  },
+
+  commit: async (campaigns: CampaignDetail[]): Promise<CampaignSummary[]> => {
+    const response = await apiClient.post<CampaignSummary[]>('/campaigns/commit', { campaigns });
+    return response.data;
+  },
+
+  remove: async (code: string): Promise<CampaignSummary[]> => {
+    const response = await apiClient.delete<CampaignSummary[]>(`/campaigns/${encodeURIComponent(code)}`);
     return response.data;
   },
 };

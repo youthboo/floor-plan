@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
 import { cn } from '../../lib/utils';
-import type { CellValue, WorkbookPreview } from '../../utils/parseWorkbook';
+import type { CellValue, SheetPreview, WorkbookPreview } from '../../utils/parseWorkbook';
 
 interface ARDrawdownPreviewProps {
   workbook: WorkbookPreview;
@@ -10,6 +10,8 @@ interface ARDrawdownPreviewProps {
   onCalculate?: () => void;
   onUploadSOT?: () => void;
   sotFileName?: string | null;
+  sotUploading?: boolean;
+  sotPreview?: SheetPreview | null;
 }
 
 function formatCell(value: CellValue): string {
@@ -53,6 +55,8 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
   onCalculate,
   onUploadSOT,
   sotFileName,
+  sotUploading,
+  sotPreview,
 }) => {
   const [activeSheet, setActiveSheet] = useState(workbook.sheets[0]?.name ?? '');
 
@@ -75,70 +79,129 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
-      <div className="border-b border-primary-100 bg-primary-50 px-6 py-3 text-sm text-primary-700">
-        Files uploaded — review the preview below, then press Calculate.
-      </div>
+    <div className="space-y-6">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <div className="border-b border-primary-100 bg-primary-50 px-6 py-3 text-sm text-primary-700">
+          Files uploaded — review the preview below, then press Calculate.
+        </div>
 
-      <div className="flex flex-col gap-2 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">AR drawdown preview</h2>
-        <p className="truncate text-xs text-slate-400 sm:max-w-md sm:text-right">
-          {workbook.fileName}
-        </p>
-      </div>
+        <div className="flex flex-col gap-2 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">AR drawdown preview</h2>
+          <p className="truncate text-xs text-slate-400 sm:max-w-md sm:text-right">
+            {workbook.fileName}
+          </p>
+        </div>
 
-      <Tabs value={activeSheet} onValueChange={setActiveSheet}>
-        <TabsList className="border-b border-slate-100 px-6 py-4">
-          {workbook.sheets.map((sheet) => (
-            <TabsTrigger key={sheet.name} variant="pill" value={sheet.name}>
-              {sheet.name}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+        <Tabs value={activeSheet} onValueChange={setActiveSheet}>
+          <TabsList className="border-b border-slate-100 px-6 py-4">
+            {workbook.sheets.map((sheet) => (
+              <TabsTrigger key={sheet.name} variant="pill" value={sheet.name}>
+                {sheet.name}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
 
-      <div className="max-h-[28rem] overflow-auto border-b border-slate-100">
-        {currentSheet.headers.length === 0 ? (
-          <p className="py-10 text-center text-sm text-slate-500">This sheet is empty.</p>
-        ) : (
-          <table className="w-full caption-bottom text-sm">
-            <thead className="sticky top-0 border-b border-gray-200 bg-gray-50">
-              <tr>
-                {currentSheet.headers.map((header, index) => (
-                  <th
-                    key={`${header}-${index}`}
-                    className="h-12 whitespace-nowrap px-6 py-3 text-left align-middle text-xs font-bold uppercase tracking-wider text-gray-700"
-                  >
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row, rowIndex) => (
-                <tr
-                  key={rowIndex}
-                  className="border-b border-gray-100 transition-colors hover:bg-gray-50"
-                >
-                  {row.map((cell, cellIndex) => (
-                    <td
-                      key={cellIndex}
-                      className={cn(
-                        'whitespace-nowrap px-6 py-4 align-middle text-slate-700',
-                        isNumericCell(cell) && 'text-right font-semibold text-slate-900'
-                      )}
+        <div className="max-h-[28rem] overflow-auto">
+          {currentSheet.headers.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-500">This sheet is empty.</p>
+          ) : (
+            <table className="w-full caption-bottom text-sm">
+              <thead className="sticky top-0 border-b border-gray-200 bg-gray-50">
+                <tr>
+                  {currentSheet.headers.map((header, index) => (
+                    <th
+                      key={`${header}-${index}`}
+                      className="h-12 whitespace-nowrap px-6 py-3 text-left align-middle text-xs font-bold uppercase tracking-wider text-gray-700"
                     >
-                      {formatCell(cell)}
-                    </td>
+                      {header}
+                    </th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {visibleRows.map((row, rowIndex) => (
+                  <tr
+                    key={rowIndex}
+                    className="border-b border-gray-100 transition-colors hover:bg-gray-50"
+                  >
+                    {row.map((cell, cellIndex) => (
+                      <td
+                        key={cellIndex}
+                        className={cn(
+                          'whitespace-nowrap px-6 py-4 align-middle text-slate-700',
+                          isNumericCell(cell) && 'text-right font-semibold text-slate-900'
+                        )}
+                      >
+                        {formatCell(cell)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-6 py-4">
+      {sotPreview && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <div className="flex flex-col gap-2 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-slate-900">SOT preview</h2>
+              <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
+                {sotPreview.rows.length} rows
+              </span>
+            </div>
+            <p className="truncate text-xs text-slate-400 sm:max-w-md sm:text-right">
+              {sotFileName}
+            </p>
+          </div>
+
+          <div className="max-h-[20rem] overflow-auto">
+            {sotPreview.headers.length === 0 ? (
+              <p className="py-10 text-center text-sm text-slate-500">This file is empty.</p>
+            ) : (
+              <table className="w-full caption-bottom text-sm">
+                <thead className="sticky top-0 border-b border-gray-200 bg-gray-50">
+                  <tr>
+                    {sotPreview.headers.map((header, index) => (
+                      <th
+                        key={`${header}-${index}`}
+                        className="h-12 whitespace-nowrap px-6 py-3 text-left align-middle text-xs font-bold uppercase tracking-wider text-gray-700"
+                      >
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {sotPreview.rows.map((row, rowIndex) => (
+                    <tr
+                      key={rowIndex}
+                      className="border-b border-gray-100 transition-colors hover:bg-gray-50"
+                    >
+                      {row.map((cell, cellIndex) => (
+                        <td
+                          key={cellIndex}
+                          className={cn(
+                            'whitespace-nowrap px-6 py-4 align-middle text-slate-700',
+                            cellIndex === 0 && 'font-semibold text-slate-900'
+                          )}
+                        >
+                          {formatCell(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <Button
           type="button"
           variant="secondary"
@@ -148,13 +211,18 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
           Reset
         </Button>
         <div className="flex flex-wrap items-center gap-3">
-          {sotFileName && (
+          {sotFileName && !sotPreview && (
             <span className="max-w-[12rem] truncate text-xs text-slate-500" title={sotFileName}>
               SOT: {sotFileName}
             </span>
           )}
-          <Button type="button" variant="outline" onClick={onUploadSOT} disabled={!onUploadSOT}>
-            {sotFileName ? 'Replace SOT' : 'Upload SOT'}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onUploadSOT}
+            disabled={!onUploadSOT || sotUploading}
+          >
+            {sotUploading ? 'Uploading SOT...' : sotFileName ? 'Replace SOT' : 'Upload SOT'}
           </Button>
           <Button type="button" variant="default" onClick={onCalculate} disabled={!onCalculate}>
             Calculate

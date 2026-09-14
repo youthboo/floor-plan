@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -12,7 +12,11 @@ import {
   SelectValue,
 } from '../ui/Select';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
-import { getMockCampaign } from '../../data/mockCampaigns';
+import LoadingSpinner from '../Shared/LoadingSpinner';
+import ErrorAlert from '../Shared/ErrorAlert';
+import { campaignService } from '../../services/api';
+import { getApiErrorMessage } from '../../utils/apiError';
+import type { CampaignDetail } from '../../types';
 
 const AFFECTED_DEALERS_OPTIONS = ['All dealers', 'Selected dealers'];
 
@@ -22,8 +26,31 @@ export const CampaignDetailPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'campaign';
 
-  // Mock data - replace with API call later
-  const campaign = getMockCampaign(campaignId);
+  const [campaign, setCampaign] = useState<CampaignDetail | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!campaignId) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setLoadError(null);
+    campaignService
+      .get(campaignId)
+      .then((data) => {
+        if (!cancelled) setCampaign(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(getApiErrorMessage(err, 'Failed to load campaign'));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
   const campaignData = {
     name: campaign?.name ?? 'Untitled campaign',
     code: campaign?.code ?? campaignId ?? '',
@@ -100,6 +127,18 @@ export const CampaignDetailPage: React.FC = () => {
               </div>
             </div>
 
+            {isLoading ? (
+              <div className="py-10">
+                <LoadingSpinner />
+              </div>
+            ) : loadError ? (
+              <ErrorAlert message={loadError} />
+            ) : !campaign ? (
+              <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">
+                Campaign not found.
+              </div>
+            ) : (
+              <>
             {/* Subvention Campaign Section */}
             <Card className="mb-6">
               <CardHeader className="px-6 py-5">
@@ -270,6 +309,8 @@ export const CampaignDetailPage: React.FC = () => {
                 </div>
               </CardContent>
             </Card>
+              </>
+            )}
           </div>
         </div>
       </main>

@@ -170,3 +170,59 @@ export interface AppState {
   uploadState: UploadState;
   calculationState: CalculationState;
 }
+
+// ============= CAMPAIGN MASTER TYPES =============
+export interface CampaignConditionRow {
+  id: number;
+  campaign: string;
+  range: string;
+  model: string;
+  /** Display format: dd-mm-yy */
+  ddStart: string;
+  /** Display format: dd-mm-yy */
+  ddEnd: string;
+  units?: number;
+  affectedDealers: string;
+  selectedDealers?: string[];
+  exception?: string | null;
+}
+
+export interface RateTierRow {
+  id: number;
+  range: string;
+  startDay: number;
+  endDay: number;
+  rate: number;
+  plus: string;
+  /** Display format: dd-mm-yy */
+  effectiveStart: string;
+  /** Display format: dd-mm-yy */
+  effectiveEnd: string;
+  active: boolean;
+  deliveryDate: boolean;
+}
+
+export interface CampaignDetail {
+  code: string;
+  name: string;
+  status: string;
+  freeDays: number;
+  units: number;
+  campaignConditions: CampaignConditionRow[];
+  rateByDayRange: RateTierRow[];
+}
+
+export interface CampaignSummary {
+  code: string;
+  name: string;
+  status: string;
+  models: string;
+  drawdownPeriod: string;
+}
+
+export interface CampaignImportResult {
+  fileName: string;
+  campaignsExtracted: number;
+  totalQuotaRows: number;
+  campaigns: CampaignDetail[];
+}

@@ -72,6 +72,29 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
     return first ? Object.keys(first) : [];
   }, [result.detailRecords]);
 
+  const waiveRows = useMemo(() => {
+    const records = result.detailRecords ?? [];
+    if (records.length === 0 || !('waive amount' in records[0])) return [];
+
+    const toNumber = (value: unknown): number => {
+      if (typeof value === 'number') return value;
+      const parsed = parseFloat(String(value ?? '0').replace(/,/g, ''));
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    return records
+      .map((row) => ({ row, waiveAmount: toNumber(row['waive amount']) }))
+      .filter(({ waiveAmount }) => waiveAmount > 0)
+      .map(({ row, waiveAmount }) => ({
+        vinNumber: String(row['VIN Number'] ?? ''),
+        dealer: `${row['Dealer Code'] ?? ''} - ${row['Dealer Name'] ?? ''}`,
+        waiveAmount,
+        reason: String(row['reason'] ?? ''),
+        ramChargeAfter: toNumber(row['RAM Charge (After Waive)']),
+        dealerChargeAfter: toNumber(row['Dealer Charge (After Waive)']),
+      }));
+  }, [result.detailRecords]);
+
   const dealerSummaryColumns = useMemo(() => {
     const first = result.dealerSummary?.[0];
     return first ? Object.keys(first) : [];
@@ -157,6 +180,68 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
         </div>
       </div>
 
+      {waiveRows.length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 px-6 py-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold text-slate-900">Waive preview</h3>
+              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
+                {waiveRows.length} waived
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-slate-500">
+              VINs with an approved waive amount applied from the uploaded waive file
+            </p>
+          </div>
+          <div className="max-h-[28rem] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
+                    VIN Number
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Dealer
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Waive Amount
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Reason
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
+                    RAM Charge (After Waive)
+                  </th>
+                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Dealer Charge (After Waive)
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {waiveRows.map((row) => (
+                  <tr key={row.vinNumber} className="border-t border-slate-100">
+                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
+                      {row.vinNumber}
+                    </td>
+                    <td className="px-4 py-3 text-slate-700">{row.dealer}</td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {formatNumber(row.waiveAmount, 2)}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{row.reason}</td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {formatNumber(row.ramChargeAfter, 2)}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {formatNumber(row.dealerChargeAfter, 2)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {mismatchCount > 0 && (
         <div className="overflow-hidden rounded-xl border border-orange-200 bg-orange-50/60 shadow-sm">
           <div className="px-6 py-5">
@@ -170,9 +255,9 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
               {mismatchCount} VINs assigned to a campaign that does not match the campaign conditions
             </p>
           </div>
-          <div className="overflow-x-auto bg-white/70">
+          <div className="max-h-[28rem] overflow-auto bg-white/70">
             <table className="w-full text-sm">
-              <thead className="bg-orange-50/80">
+              <thead className="sticky top-0 bg-orange-50/80">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
                     VIN Number

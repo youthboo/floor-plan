@@ -6,6 +6,8 @@ Main Flask application with calculation logic
 from __future__ import annotations
 
 import os
+import json
+import re
 import traceback
 from typing import Any
 import numpy as np
@@ -37,14 +39,29 @@ UPLOAD_FOLDER = BASE_DIR / 'uploads'
 OUTPUT_FOLDER = BASE_DIR / 'AR_Outputs'
 OUTPUT_WAIVE_FOLDER = BASE_DIR / 'AR_Outputs - Waive'
 AR_INPUT_FOLDER = BASE_DIR / 'AR_Input'
+SOT_INPUT_FOLDER = BASE_DIR / 'SOT_Input'
+CAMPAIGN_INPUT_FOLDER = BASE_DIR / 'Campaign_Input'
+DATA_DIR = BASE_DIR / 'data'
+CAMPAIGNS_FILE = DATA_DIR / 'campaigns.json'
 CONFIG_PATH = BASE_DIR / 'config' / 'Rental_Charge_Conditions_v2.xlsx'
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_WAIVE_FOLDER, exist_ok=True)
 os.makedirs(AR_INPUT_FOLDER, exist_ok=True)
+os.makedirs(SOT_INPUT_FOLDER, exist_ok=True)
+os.makedirs(CAMPAIGN_INPUT_FOLDER, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 WAIVE_REQUIRED_COLUMNS = ['Dealer Code', 'Dealer Name', 'VIN Number', 'waive amount', 'reason', 'approved']
+SOT_REQUIRED_COLUMNS = ['VIN No.', 'SOT Start Date']
+CAMPAIGN_HEADER_REQUIRED_COLUMNS = ['Campaign Code', 'Campaign Name', 'Free Days']
+CAMPAIGN_CONDITION_REQUIRED_COLUMNS = [
+    'Campaign Code', 'Range', 'Model (Sub)', 'DD Start', 'DD End', 'Units', 'Affected Dealers'
+]
+CAMPAIGN_RATE_REQUIRED_COLUMNS = [
+    'Campaign Code', 'Range', 'Start Day', 'End Day', 'Rate %', 'Eff Start', 'Eff End', 'Active', 'Delivery Date'
+]
 
 DAYS_PER_YEAR = 365
 # Converts an annual rate% (e.g. 12) directly to a daily amount: price * rate / 100 / 365.
@@ -159,6 +176,19 @@ def load_penalty_sheet(xls: pd.ExcelFile, sheet_penalty: str | None) -> pd.DataF
     return df_penalty
 
 
+def load_sot_sheet(sot_file_path: str | None) -> pd.DataFrame:
+    """Load and standardize the optional SOT file (VIN Number, SOT Start Date)."""
+    df_sot = pd.DataFrame(columns=['VIN Number', 'SOT Start Date'])
+    if sot_file_path:
+        df_sot = pd.read_excel(sot_file_path, header=0)
+        df_sot.columns = df_sot.columns.astype(str).str.strip()
+        if 'VIN No.' in df_sot.columns:
+            df_sot.rename(columns={'VIN No.': 'VIN Number'}, inplace=True)
+        df_sot['SOT Start Date'] = pd.to_datetime(df_sot['SOT Start Date'], errors='coerce')
+        df_sot = df_sot[['VIN Number', 'SOT Start Date']].dropna(subset=['SOT Start Date'])
+    return df_sot
+
+
 def prepare_ar_data(df_ar: pd.DataFrame, source_name: str) -> pd.DataFrame:
     """Prepare and standardize AR data"""
     df = df_ar.copy()
@@ -233,7 +263,10 @@ def calculate_detailed_charge(
     alloc_date = pd.to_datetime(row['Allocation Date'], errors='coerce')
     paid_date = pd.to_datetime(row['Payment Date'], errors='coerce')
     due_date = pd.to_datetime(row.get('Due Date'), errors='coerce')
+    sot_start_date = pd.to_datetime(row.get('SOT Start Date'), errors='coerce')
     free_days = int(row.get('Free Days', 0))
+    # A matched Campaign Master quota row overrides the standard rate table for this VIN.
+    rate_ranges = row.get('_CampaignRateOverride') or rate_ranges
 
     if pd.isna(alloc_date):
         return pd.Series([0.0, 0.0, 0.0, 0, '', '', 0, 0])
@@ -285,10 +318,21 @@ def calculate_detailed_charge(
     if dealer_start <= dealer_end:
         dealer_days = pd.date_range(dealer_start, dealer_end, freq='D')
         for d in dealer_days:
+            if not (month_start <= d <= month_end):
+                continue
+
+            # SOT override: on/after the SOT Start Date, the day still belongs to the
+            # Dealer bucket, but is charged at the flat Penalty Rate instead of a
+            # rate-table lookup. Never applies to RAM Charge (see loops above).
+            if pd.notna(sot_start_date) and d >= sot_start_date:
+                daily_interest = (price * penalty_rate) / ANNUAL_RATE_TO_DAILY_DIVISOR
+                dealer_charge += daily_interest
+                dealer_desc['SOT Override'] = dealer_desc.get('SOT Override', 0) + 1
+                continue
+
             day_count = (d - alloc_date).days + 1
             rate_rec = find_rate_for_day(rate_ranges, day_count, d)
-
-            if month_start <= d <= month_end and rate_rec:
+            if rate_rec:
                 daily_interest = (price * float(rate_rec['Rate'])) / ANNUAL_RATE_TO_DAILY_DIVISOR
                 dealer_charge += daily_interest
                 rate_key = f"{rate_rec['StartDay']}-{rate_rec['EndDay']} @ {rate_rec['Rate']}%"
@@ -311,7 +355,7 @@ def calculate_detailed_charge(
     total_dealer_charge = dealer_charge + penalty_charge
     ram_desc_txt = ', '.join(f"{v}d: {k}" for k, v in ram_desc.items())
     dealer_desc_txt = ', '.join(
-        f"{v}d: {k}" if k != 'Penalty' else f"{v}d: Penalty @ {penalty_rate}%"
+        f"{v}d: {k} @ {penalty_rate}%" if k in ('Penalty', 'SOT Override') else f"{v}d: {k}"
         for k, v in dealer_desc.items()
     )
 
@@ -355,7 +399,7 @@ def create_excel_output(
     desired_order = [
         'Dealer Group', 'Dealer Code', 'Dealer Name', 'Model', 'VIN Number',
         'Price (Ex. Vat)', 'Allocation Date', 'Contract Number', 'Subvention Campaign',
-        'Source', 'Payment Date', 'Paid', 'Free Days', 'Due Date', 'Aging',
+        'Source', 'Payment Date', 'Paid', 'Free Days', 'Due Date', 'SOT Start Date', 'Aging',
         'RAM Charge FreeDay (This Month)', 'RAM Charge (bf)', 'RAM Charge',
         'Dealer Charge', 'waive amount', 'RAM Charge (After Waive)',
         'Dealer Charge (After Waive)', 'RAM Rate Summary', 'Dealer Rate Summary', 'reason'
@@ -462,9 +506,10 @@ def _load_ar_dataframe(
     last_month_label: str,
     is_waive_run: bool,
     df_waive: pd.DataFrame | None,
+    df_sot: pd.DataFrame,
 ) -> pd.DataFrame:
     """Load the AR Last Month / New Volume / All Payment / Penalty sheets, merge them
-    into one dataframe, and merge in waive amounts when df_waive is given."""
+    into one dataframe, and merge in SOT Start Date and (when given) waive amounts."""
     xls = pd.ExcelFile(ar_file_path, engine='openpyxl')
     sheet_names = xls.sheet_names
 
@@ -502,6 +547,7 @@ def _load_ar_dataframe(
     df_ar_current = df_ar_current.merge(df_all_payment, on='VIN Number', how='left')
     df_ar_current['Paid'] = df_ar_current['Payment Date'].notna().map({True: 'Y', False: 'N'})
     df_ar_current = df_ar_current.merge(df_penalty, on='VIN Number', how='left')
+    df_ar_current = df_ar_current.merge(df_sot, on='VIN Number', how='left')
 
     if is_waive_run:
         df_ar_current = df_ar_current.merge(
@@ -522,9 +568,12 @@ def _calculate_charges(
     month_end: pd.Timestamp,
     penalty_rate: float,
     is_waive_run: bool,
-) -> pd.DataFrame:
+) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
     """Run calculate_detailed_charge() over every row, then derive the
-    After-Waive / AR Master Code columns."""
+    After-Waive / AR Master Code columns. Each row's Free Days and interest rate table
+    are resolved against the Campaign Master (falling back to the legacy
+    Subvention_Campaign config sheet for campaigns not yet migrated); returns any
+    VIN/campaign mismatches found along the way."""
     df_rate = config_data['rates'].copy()
     df_rate.columns = df_rate.columns.str.strip()
     df_rate.rename(columns={'Start Day': 'StartDay', 'End Day': 'EndDay', 'Rate (%)': 'Rate'}, inplace=True)
@@ -534,7 +583,15 @@ def _calculate_charges(
 
     rate_ranges = prepare_rate_ranges(df_rate.to_dict('records'))
     subvention_map = df_subvention.set_index('Campaign Name')['Free Days'].to_dict()
-    df_ar_current['Free Days'] = df_ar_current['Subvention Campaign'].map(subvention_map).fillna(0).astype(int)
+
+    campaigns_by_name, quota_index = _load_active_campaign_index()
+    resolved = df_ar_current.apply(
+        lambda row: _resolve_campaign_terms(row, campaigns_by_name, quota_index, subvention_map),
+        axis=1,
+    )
+    df_ar_current['Free Days'] = resolved.map(lambda r: r[0]).astype(int)
+    df_ar_current['_CampaignRateOverride'] = resolved.map(lambda r: r[1])
+    mismatches = [r[2] for r in resolved if r[2] is not None]
 
     df_ar_current[[
         'RAM Charge', 'RAM Charge (bf)', 'Dealer Charge',
@@ -544,6 +601,7 @@ def _calculate_charges(
         lambda row: calculate_detailed_charge(row, rate_ranges, month_start, month_end, penalty_rate),
         axis=1
     )
+    df_ar_current.drop(columns=['_CampaignRateOverride'], inplace=True)
 
     df_ar_current['Dealer Code'] = df_ar_current['Dealer Code'].astype(str).str.zfill(DEALER_CODE_DIGITS)
     df_ar_current['Contract Number'] = df_ar_current['Contract Number'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
@@ -560,11 +618,11 @@ def _calculate_charges(
             lambda x: 'RAM Rever Automotive' if x == 0 else 'Charge to Dealer'
         )
 
-    return df_ar_current
+    return df_ar_current, mismatches
 
 
 def _build_stats_and_distributions(
-    df_ar_current: pd.DataFrame, is_waive_run: bool
+    df_ar_current: pd.DataFrame, is_waive_run: bool, mismatches: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
     """Compute the stats block, campaign distribution, and summary-by-dealer-code —
     all read numeric charge columns, so this must run before export formatting."""
@@ -572,7 +630,7 @@ def _build_stats_and_distributions(
         'rowsProcessed': int(len(df_ar_current)),
         'totalRamCharge': float(pd.to_numeric(df_ar_current['RAM Charge'], errors='coerce').fillna(0).sum()),
         'totalDealerCharge': float(pd.to_numeric(df_ar_current['Dealer Charge'], errors='coerce').fillna(0).sum()),
-        'mismatchCount': 0,
+        'mismatchCount': len(mismatches),
     }
     if is_waive_run:
         stats['totalWaive'] = float(pd.to_numeric(df_ar_current['waive amount'], errors='coerce').fillna(0).sum())
@@ -688,6 +746,7 @@ def _format_ar_detail_for_export(
     df_ar_current['Allocation Date'] = pd.to_datetime(df_ar_current['Allocation Date'], errors='coerce').dt.strftime('%d/%m/%Y')
     df_ar_current['Payment Date'] = pd.to_datetime(df_ar_current['Payment Date'], errors='coerce').fillna(month_end).dt.strftime('%d/%m/%Y')
     df_ar_current['Due Date'] = pd.to_datetime(df_ar_current['Due Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
+    df_ar_current['SOT Start Date'] = pd.to_datetime(df_ar_current['SOT Start Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
 
     df_ar_current['Price (Ex. Vat)'] = df_ar_current['Price (Ex. Vat)'].astype(float).map('{:,.2f}'.format)
     df_ar_current['RAM Charge'] = df_ar_current['RAM Charge'].astype(float).map('{:,.2f}'.format)
@@ -710,10 +769,12 @@ def _run_calculation_pipeline(
     penalty_rate: float,
     last_month_label: str,
     waive_file_path: str | None = None,
+    sot_file_path: str | None = None,
 ) -> dict[str, Any]:
     """
     Shared pipeline for /api/calculate (Pre-Waive) and /api/calculate-with-waive
-    (Post-Waive) — pass waive_file_path to run Post-Waive.
+    (Post-Waive) — pass waive_file_path to run Post-Waive. sot_file_path is
+    optional for either run and never blocks calculation on its own.
 
     Returns the payload dict, or raises CalculationValidationError.
 
@@ -722,14 +783,15 @@ def _run_calculation_pipeline(
     """
     is_waive_run = waive_file_path is not None
     df_waive = _load_waive_dataframe(waive_file_path) if is_waive_run else None
+    df_sot = load_sot_sheet(sot_file_path)
 
-    df_ar_current = _load_ar_dataframe(ar_file_path, last_month_label, is_waive_run, df_waive)
-    df_ar_current = _calculate_charges(
+    df_ar_current = _load_ar_dataframe(ar_file_path, last_month_label, is_waive_run, df_waive, df_sot)
+    df_ar_current, mismatches = _calculate_charges(
         df_ar_current, config_data, month_start, month_end, penalty_rate, is_waive_run
     )
 
     stats, campaign_distribution, summary_by_dealer_code = _build_stats_and_distributions(
-        df_ar_current, is_waive_run
+        df_ar_current, is_waive_run, mismatches
     )
     summary, summary_df = _build_price_summary(df_ar_current)
     df_rental_summary = _build_dealer_summary(df_ar_current, is_waive_run)
@@ -744,12 +806,410 @@ def _run_calculation_pipeline(
         'outputPath': output_path,
         'stats': stats,
         'campaignDistribution': campaign_distribution,
-        'mismatches': [],
+        'mismatches': mismatches,
         'summary': summary,
         'summaryByDealerCode': summary_by_dealer_code,
         'detailRecords': df_ar_current.to_dict('records'),
         'dealerSummary': df_rental_summary.to_dict('records'),
     })
+
+
+# ============= CAMPAIGN MASTER =============
+# A campaign is stored as {code, name, status, freeDays, quotaRows, rateTiers}
+# with ISO dates (YYYY-MM-DD). API responses convert to the display shape the
+# frontend uses (dd-mm-yy dates, 'campaignConditions'/'rateByDayRange' keys).
+
+
+def load_campaigns() -> list[dict[str, Any]]:
+    """Load the campaign store, or an empty list if it doesn't exist yet."""
+    if not CAMPAIGNS_FILE.exists():
+        return []
+    with open(CAMPAIGNS_FILE, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def save_campaigns(campaigns: list[dict[str, Any]]) -> None:
+    with open(CAMPAIGNS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(campaigns, f, indent=2, ensure_ascii=False)
+
+
+# Trim/variant words BYD's AR export appends after the base model name (e.g. 'SEALION 7
+# AWD', 'SEAL - Premium') that Campaign Master's Model (Sub) condition doesn't include.
+# Confirmed against the real AR sample's Model column; flag any new variant word seen in
+# future files to the PO so this list stays accurate.
+_MODEL_TRIM_KEYWORDS = {'PREMIUM', 'DYNAMIC', 'PERFORMANCE', 'AWD', 'RWD', 'EXTENDED', 'STD', 'EXT', 'DELUXE'}
+
+
+def _normalize_model(model: Any) -> str:
+    """Normalize a Model string for VIN-matching: uppercase, drop parenthetical spec
+    details (e.g. '(480 KM-EXT)'), drop known trim/variant keywords, then collapse
+    everything else (spaces, hyphens) so naming variants like 'SEALION 7 AWD' (AR file)
+    and 'SEALION7' (Campaign Master) compare equal without colliding with unrelated
+    models that share a prefix (e.g. 'SEAL' vs 'SEALION6')."""
+    if model is None or (isinstance(model, float) and pd.isna(model)):
+        return ''
+    text = re.sub(r'\([^)]*\)', ' ', str(model).upper())
+    tokens = [t for t in re.split(r'[\s\-]+', text) if t and t not in _MODEL_TRIM_KEYWORDS]
+    return ''.join(tokens)
+
+
+def _load_active_campaign_index() -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+    """Build the lookup structures VIN-matching needs from the Campaign Master store:
+    {campaign name (lowercased) -> {code, name, freeDays, rateRanges}}, and a flat list
+    of quota-row entries (one per Model/DD Start/DD End condition) to match VINs against.
+    Draft campaigns are excluded — only Active campaigns take part in calculation."""
+    campaigns_by_name: dict[str, dict[str, Any]] = {}
+    quota_index: list[dict[str, Any]] = []
+
+    for campaign in load_campaigns():
+        if campaign.get('status', 'Active') == 'Draft':
+            continue
+
+        rate_ranges = prepare_rate_ranges([
+            {
+                'StartDay': tier.get('startDay', 0),
+                'EndDay': tier.get('endDay', 0),
+                'Rate': tier.get('rate', 0.0),
+                'EffectiveStart': tier['effectiveStart'],
+                'EffectiveEnd': tier['effectiveEnd'],
+                'IsActive': tier.get('active', True),
+            }
+            for tier in campaign.get('rateTiers', [])
+            if tier.get('effectiveStart') and tier.get('effectiveEnd')
+        ])
+
+        campaigns_by_name[campaign['name'].strip().lower()] = {
+            'code': campaign['code'],
+            'name': campaign['name'],
+            'freeDays': campaign.get('freeDays', 0),
+            'rateRanges': rate_ranges,
+        }
+
+        for quota_row in campaign.get('quotaRows', []):
+            if not quota_row.get('model') or not quota_row.get('ddStart') or not quota_row.get('ddEnd'):
+                continue
+            quota_index.append({
+                'campaignName': campaign['name'],
+                'model': _normalize_model(quota_row['model']),
+                'ddStart': pd.Timestamp(quota_row['ddStart']),
+                'ddEnd': pd.Timestamp(quota_row['ddEnd']),
+                'selectedDealers': set(quota_row.get('selectedDealers') or []),
+            })
+
+    return campaigns_by_name, quota_index
+
+
+def _match_campaign_for_vin(
+    model: Any, dealer_code: Any, alloc_date: pd.Timestamp, quota_index: list[dict[str, Any]]
+) -> str | None:
+    """Find the Campaign Master quota-row condition (Model + DD Start/End, optionally a
+    dealer restriction) that this VIN's Model/Allocation Date/Dealer Code satisfies,
+    returning that campaign's name — or None if no quota row applies."""
+    if pd.isna(alloc_date) or not model or (isinstance(model, float) and pd.isna(model)):
+        return None
+    model_norm = _normalize_model(model)
+    if not model_norm:
+        return None
+    for entry in quota_index:
+        if entry['model'] != model_norm:
+            continue
+        if not (entry['ddStart'] <= alloc_date <= entry['ddEnd']):
+            continue
+        if entry['selectedDealers'] and str(dealer_code).strip() not in entry['selectedDealers']:
+            continue
+        return entry['campaignName']
+    return None
+
+
+def _resolve_campaign_terms(
+    row: pd.Series,
+    campaigns_by_name: dict[str, dict[str, Any]],
+    quota_index: list[dict[str, Any]],
+    subvention_map: dict[str, Any],
+) -> tuple[int, list[dict[str, Any]] | None, dict[str, Any] | None]:
+    """Resolve (free_days, campaign rate table override or None, mismatch or None) for one
+    AR row. Cross-checks the AR file's own 'Subvention Campaign' tag against what the
+    Campaign Master quota-row conditions say the VIN should belong to:
+    - Tagged 'Normal' (the legacy default bucket, not a real campaign) -> Free Days from
+      the legacy Subvention_Campaign config sheet, same as before Campaign Master existed.
+      Never matched against Campaign Master conditions or flagged as a mismatch.
+    - Tagged to a real campaign, and a Master quota row matches this VIN -> use that
+      campaign's terms; flagged as a mismatch only if it's a *different* campaign than
+      the AR tag.
+    - Tagged to a campaign that exists in Master but no quota row matches this VIN ->
+      mismatch, falls back to Normal (no override).
+    - Tagged to a name not in Master at all, but present in the legacy
+      Subvention_Campaign config sheet -> not yet migrated, old behavior preserved.
+    - Tagged to a name found nowhere -> mismatch, falls back to Normal (0 free days).
+    """
+    raw_assigned = row.get('Subvention Campaign')
+    assigned = str(raw_assigned) if raw_assigned is not None else 'Normal'
+    legacy_free_days = subvention_map.get(assigned)
+
+    if assigned.strip().lower() == 'normal':
+        return int(legacy_free_days) if legacy_free_days is not None else 0, None, None
+
+    model = row.get('Model')
+    dealer_code = row.get('Dealer Code')
+    alloc_date = pd.to_datetime(row.get('Allocation Date'), errors='coerce')
+    drawdown_display = alloc_date.strftime('%d/%m/%Y') if pd.notna(alloc_date) else ''
+
+    def mismatch(should_be: str, reason: str) -> dict[str, Any]:
+        return {
+            'vinNumber': str(row.get('VIN Number', '')),
+            'dealer': f"{row.get('Dealer Code', '')} - {row.get('Dealer Name', '')}",
+            'model': str(model or ''),
+            'drawdown': drawdown_display,
+            'assignedTo': assigned,
+            'shouldBe': should_be,
+            'reason': reason,
+        }
+
+    matched_name = _match_campaign_for_vin(model, dealer_code, alloc_date, quota_index)
+
+    if matched_name:
+        campaign = campaigns_by_name[matched_name.strip().lower()]
+        if matched_name.strip().lower() == assigned.strip().lower():
+            return campaign['freeDays'], campaign['rateRanges'], None
+        return campaign['freeDays'], campaign['rateRanges'], mismatch(
+            matched_name,
+            f"Model '{model}' allocated {drawdown_display} matches campaign '{matched_name}', not '{assigned}'",
+        )
+
+    if assigned.strip().lower() in campaigns_by_name:
+        return 0, None, mismatch(
+            'Normal', f"VIN does not meet '{assigned}' model/allocation-date conditions"
+        )
+
+    if legacy_free_days is not None:
+        # Legacy campaign not yet migrated into Campaign Master — old behavior, not a mismatch.
+        return int(legacy_free_days), None, None
+
+    return 0, None, mismatch(
+        'Normal', f"Campaign '{assigned}' not found in Campaign Master or legacy config"
+    )
+
+
+def _parse_campaign_date(value: Any) -> str | None:
+    """Parse a DD-MM-YY (or similar) cell into an ISO YYYY-MM-DD string."""
+    parsed = pd.to_datetime(value, dayfirst=True, errors='coerce')
+    return None if pd.isna(parsed) else parsed.strftime('%Y-%m-%d')
+
+
+def _format_display_date(iso_date: str | None) -> str:
+    """ISO YYYY-MM-DD -> dd-mm-yy, matching the frontend's display format."""
+    if not iso_date:
+        return ''
+    return datetime.strptime(iso_date, '%Y-%m-%d').strftime('%d-%m-%y')
+
+
+def _parse_display_date(display_date: Any) -> str | None:
+    """dd-mm-yy (or other reasonable formats) -> ISO YYYY-MM-DD, for data coming back from the UI."""
+    if not display_date:
+        return None
+    parsed = pd.to_datetime(display_date, dayfirst=True, errors='coerce')
+    return None if pd.isna(parsed) else parsed.strftime('%Y-%m-%d')
+
+
+def _parse_campaign_bool(value: Any) -> bool:
+    return str(value).strip().upper() == 'TRUE'
+
+
+def parse_campaign_import_file(file_path: str) -> list[dict[str, Any]]:
+    """
+    Parse a campaign import workbook (sheets: 'Campaign', 'Campaign Condition',
+    'Rate by Day Range') into a list of campaign dicts, grouped by Campaign
+    Code. Raises CalculationValidationError if a required sheet/column is
+    missing — this is the extraction step (spec 2.3); nothing is saved here.
+    """
+    try:
+        xls = pd.ExcelFile(file_path, engine='openpyxl')
+    except Exception as e:
+        raise CalculationValidationError(f'Could not read campaign file: {e}')
+
+    required_sheets = ['Campaign', 'Campaign Condition', 'Rate by Day Range']
+    missing_sheets = [s for s in required_sheets if s not in xls.sheet_names]
+    if missing_sheets:
+        raise CalculationValidationError(f"Missing required sheet(s): {', '.join(missing_sheets)}")
+
+    df_header = xls.parse('Campaign')
+    df_header.columns = df_header.columns.astype(str).str.strip()
+    missing = [c for c in CAMPAIGN_HEADER_REQUIRED_COLUMNS if c not in df_header.columns]
+    if missing:
+        raise CalculationValidationError(f"'Campaign' sheet is missing: {', '.join(missing)}")
+
+    df_condition = xls.parse('Campaign Condition')
+    df_condition.columns = df_condition.columns.astype(str).str.strip()
+    missing = [c for c in CAMPAIGN_CONDITION_REQUIRED_COLUMNS if c not in df_condition.columns]
+    if missing:
+        raise CalculationValidationError(f"'Campaign Condition' sheet is missing: {', '.join(missing)}")
+
+    df_rate = xls.parse('Rate by Day Range')
+    df_rate.columns = df_rate.columns.astype(str).str.strip()
+    missing = [c for c in CAMPAIGN_RATE_REQUIRED_COLUMNS if c not in df_rate.columns]
+    if missing:
+        raise CalculationValidationError(f"'Rate by Day Range' sheet is missing: {', '.join(missing)}")
+
+    df_header['Campaign Code'] = df_header['Campaign Code'].astype(str).str.strip()
+    df_condition['Campaign Code'] = df_condition['Campaign Code'].astype(str).str.strip()
+    df_rate['Campaign Code'] = df_rate['Campaign Code'].astype(str).str.strip()
+
+    campaigns = []
+    for _, header_row in df_header.iterrows():
+        code = str(header_row['Campaign Code']).strip()
+        if not code or code.lower() == 'nan':
+            continue
+        name = str(header_row['Campaign Name']).strip()
+        free_days = int(header_row['Free Days']) if pd.notna(header_row['Free Days']) else 0
+
+        quota_rows = [
+            {
+                'campaign': code,
+                'range': str(row.get('Range', '')).strip(),
+                'model': str(row.get('Model (Sub)', '')).strip(),
+                'ddStart': _parse_campaign_date(row.get('DD Start')),
+                'ddEnd': _parse_campaign_date(row.get('DD End')),
+                'units': int(row['Units']) if pd.notna(row.get('Units')) else 0,
+                'affectedDealers': str(row.get('Affected Dealers') or 'All dealers').strip() or 'All dealers',
+                'exception': (
+                    str(row['Exception']).strip()
+                    if 'Exception' in df_condition.columns and pd.notna(row.get('Exception'))
+                    else None
+                ),
+            }
+            for _, row in df_condition[df_condition['Campaign Code'] == code].iterrows()
+        ]
+
+        rate_tiers = [
+            {
+                'range': str(row.get('Range', '')).strip(),
+                'startDay': int(row['Start Day']) if pd.notna(row.get('Start Day')) else 0,
+                'endDay': int(row['End Day']) if pd.notna(row.get('End Day')) else 0,
+                'rate': float(row['Rate %']) if pd.notna(row.get('Rate %')) else 0.0,
+                'plus': (
+                    str(row['Plus']).strip()
+                    if 'Plus' in df_rate.columns and pd.notna(row.get('Plus'))
+                    else '-'
+                ),
+                'effectiveStart': _parse_campaign_date(row.get('Eff Start')),
+                'effectiveEnd': _parse_campaign_date(row.get('Eff End')),
+                'active': _parse_campaign_bool(row.get('Active', 'TRUE')),
+                'deliveryDate': _parse_campaign_bool(row.get('Delivery Date', 'FALSE')),
+            }
+            for _, row in df_rate[df_rate['Campaign Code'] == code].iterrows()
+        ]
+
+        campaigns.append({
+            'code': code,
+            'name': name,
+            'status': 'Active',
+            'freeDays': free_days,
+            'quotaRows': quota_rows,
+            'rateTiers': rate_tiers,
+        })
+
+    return campaigns
+
+
+def _campaign_detail_shape(campaign: dict[str, Any]) -> dict[str, Any]:
+    """Storage shape -> the shape CampaignDetailPage / the review screen render."""
+    quota_rows = campaign.get('quotaRows', [])
+    rate_tiers = campaign.get('rateTiers', [])
+    return {
+        'code': campaign['code'],
+        'name': campaign['name'],
+        'status': campaign.get('status', 'Active'),
+        'freeDays': campaign.get('freeDays', 0),
+        'units': sum(q.get('units', 0) for q in quota_rows),
+        'campaignConditions': [
+            {
+                'id': i + 1,
+                'campaign': q.get('campaign', campaign['code']),
+                'range': q.get('range', ''),
+                'model': q.get('model', ''),
+                'ddStart': _format_display_date(q.get('ddStart')),
+                'ddEnd': _format_display_date(q.get('ddEnd')),
+                'units': q.get('units', 0),
+                'affectedDealers': q.get('affectedDealers', 'All dealers'),
+                'selectedDealers': q.get('selectedDealers', []),
+                'exception': q.get('exception'),
+            }
+            for i, q in enumerate(quota_rows)
+        ],
+        'rateByDayRange': [
+            {
+                'id': i + 1,
+                'range': t.get('range', ''),
+                'startDay': t.get('startDay', 0),
+                'endDay': t.get('endDay', 0),
+                'rate': t.get('rate', 0.0),
+                'plus': t.get('plus', '-'),
+                'effectiveStart': _format_display_date(t.get('effectiveStart')),
+                'effectiveEnd': _format_display_date(t.get('effectiveEnd')),
+                'active': t.get('active', True),
+                'deliveryDate': t.get('deliveryDate', False),
+            }
+            for i, t in enumerate(rate_tiers)
+        ],
+    }
+
+
+def _campaign_list_shape(campaign: dict[str, Any]) -> dict[str, Any]:
+    """Storage shape -> the summary row shape CampaignManagementPage's table renders."""
+    quota_rows = campaign.get('quotaRows', [])
+    models = sorted({q['model'] for q in quota_rows if q.get('model')})
+    dd_starts = [q['ddStart'] for q in quota_rows if q.get('ddStart')]
+    dd_ends = [q['ddEnd'] for q in quota_rows if q.get('ddEnd')]
+    drawdown_period = (
+        f"{_format_display_date(min(dd_starts))} → {_format_display_date(max(dd_ends))}"
+        if dd_starts and dd_ends else '—'
+    )
+    return {
+        'code': campaign['code'],
+        'name': campaign['name'],
+        'status': campaign.get('status', 'Active'),
+        'models': ', '.join(models) if models else '—',
+        'drawdownPeriod': drawdown_period,
+    }
+
+
+def _campaign_from_frontend_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    """The reviewed/edited detail shape from the UI -> storage shape (ISO dates)."""
+    code = str(payload['code']).strip()
+    return {
+        'code': code,
+        'name': str(payload.get('name', '')).strip(),
+        'status': payload.get('status') or 'Active',
+        'freeDays': int(payload.get('freeDays') or 0),
+        'quotaRows': [
+            {
+                'campaign': q.get('campaign') or code,
+                'range': q.get('range', ''),
+                'model': q.get('model', ''),
+                'ddStart': _parse_display_date(q.get('ddStart')),
+                'ddEnd': _parse_display_date(q.get('ddEnd')),
+                'units': int(q.get('units') or 0),
+                'affectedDealers': q.get('affectedDealers') or 'All dealers',
+                'selectedDealers': q.get('selectedDealers') or [],
+                'exception': q.get('exception'),
+            }
+            for q in payload.get('campaignConditions', [])
+        ],
+        'rateTiers': [
+            {
+                'range': t.get('range', ''),
+                'startDay': int(t.get('startDay') or 0),
+                'endDay': int(t.get('endDay') or 0),
+                'rate': float(t.get('rate') or 0),
+                'plus': t.get('plus') or '-',
+                'effectiveStart': _parse_display_date(t.get('effectiveStart')),
+                'effectiveEnd': _parse_display_date(t.get('effectiveEnd')),
+                'active': bool(t.get('active', True)),
+                'deliveryDate': bool(t.get('deliveryDate', False)),
+            }
+            for t in payload.get('rateByDayRange', [])
+        ],
+    }
 
 
 # ============= API ENDPOINTS =============
@@ -880,15 +1340,137 @@ def upload_waive():
     })
 
 
+@app.route('/api/upload-sot', methods=['POST'])
+def upload_sot():
+    """Upload and preview SOT (Stock On Truck) file"""
+    if 'sot_file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['sot_file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify({'error': 'Only .xlsx files are accepted for the SOT file'}), 400
+
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"sot_input_{timestamp}.xlsx"
+    filepath = os.path.join(SOT_INPUT_FOLDER, filename)
+    file.save(filepath)
+
+    df = pd.read_excel(filepath, header=0)
+    df.columns = df.columns.astype(str).str.strip()
+
+    missing_columns = [col for col in SOT_REQUIRED_COLUMNS if col not in df.columns]
+    if missing_columns:
+        os.remove(filepath)
+        return jsonify({
+            'error': f"SOT file is missing required column(s): {', '.join(missing_columns)}"
+        }), 400
+
+    preview_table = df.head(5).to_html(classes='table table-sm', index=False)
+
+    return jsonify({
+        'fileName': filename,
+        'filePath': filepath,
+        'sheetNames': ['SOT'],
+        'previewTables': {'SOT': preview_table},
+        'recordCounts': {'SOT': len(df)}
+    })
+
+
+@app.route('/api/campaigns', methods=['GET'])
+def list_campaigns():
+    """List all saved campaigns (summary row shape for the Campaign Management table)"""
+    campaigns = load_campaigns()
+    return jsonify([_campaign_list_shape(c) for c in campaigns])
+
+
+@app.route('/api/campaigns/<code>', methods=['GET'])
+def get_campaign(code: str):
+    """Get one saved campaign's full detail"""
+    campaigns = load_campaigns()
+    campaign = next((c for c in campaigns if c['code'] == code), None)
+    if campaign is None:
+        return jsonify({'error': 'Campaign not found'}), 404
+    return jsonify(_campaign_detail_shape(campaign))
+
+
+@app.route('/api/campaigns/import', methods=['POST'])
+def import_campaigns():
+    """Extract campaigns from an uploaded workbook for review — nothing is saved yet"""
+    if 'campaign_file' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+
+    file = request.files['campaign_file']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+
+    if not file.filename.lower().endswith('.xlsx'):
+        return jsonify({'error': 'Only .xlsx files are accepted for the campaign file'}), 400
+
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filepath = os.path.join(CAMPAIGN_INPUT_FOLDER, f"campaign_import_{timestamp}.xlsx")
+    file.save(filepath)
+
+    try:
+        campaigns = parse_campaign_import_file(filepath)
+    finally:
+        # Only used to extract data for the review step below — not needed after that.
+        os.remove(filepath)
+
+    return jsonify({
+        'fileName': filename,
+        'campaignsExtracted': len(campaigns),
+        'totalQuotaRows': sum(len(c['quotaRows']) for c in campaigns),
+        'campaigns': [_campaign_detail_shape(c) for c in campaigns],
+    })
+
+
+@app.route('/api/campaigns/commit', methods=['POST'])
+def commit_campaigns():
+    """Save reviewed campaigns (from the import screen) into the campaign store"""
+    data = request.json or {}
+    incoming = data.get('campaigns', [])
+    if not incoming:
+        return jsonify({'error': 'No campaigns to import'}), 400
+
+    by_code = {c['code']: c for c in load_campaigns()}
+    for payload in incoming:
+        campaign = _campaign_from_frontend_shape(payload)
+        by_code[campaign['code']] = campaign
+
+    updated = list(by_code.values())
+    save_campaigns(updated)
+    return jsonify([_campaign_list_shape(c) for c in updated])
+
+
+@app.route('/api/campaigns/<code>', methods=['DELETE'])
+def delete_campaign(code: str):
+    """Permanently remove one campaign from the store"""
+    campaigns = load_campaigns()
+    remaining = [c for c in campaigns if c['code'] != code]
+    if len(remaining) == len(campaigns):
+        return jsonify({'error': 'Campaign not found'}), 404
+    save_campaigns(remaining)
+    return jsonify([_campaign_list_shape(c) for c in remaining])
+
+
 @app.route('/api/calculate', methods=['POST'])
 def calculate():
     """Calculate charges without waive"""
     try:
         data = request.json
         file_path = data.get('filePath')
+        sot_file_path = data.get('sotFilePath')
 
         if not file_path or not os.path.exists(file_path):
             return jsonify({'error': 'File not found'}), 400
+
+        if sot_file_path and not os.path.exists(sot_file_path):
+            return jsonify({'error': 'SOT file not found'}), 400
 
         # Load config (rates/subventions from Excel; period/penalty prefer UI)
         config_data = load_config()
@@ -896,7 +1478,8 @@ def calculate():
         month_start, month_end, penalty_rate, last_month_label = resolve_run_period(data, config)
 
         payload = _run_calculation_pipeline(
-            file_path, config_data, month_start, month_end, penalty_rate, last_month_label
+            file_path, config_data, month_start, month_end, penalty_rate, last_month_label,
+            sot_file_path=sot_file_path
         )
         return jsonify(payload)
     except CalculationValidationError as e:
@@ -912,12 +1495,16 @@ def calculate_with_waive():
         data = request.json
         ar_file_path = data.get('arFilePath')
         waive_file_path = data.get('waiveFilePath')
+        sot_file_path = data.get('sotFilePath')
 
         if not ar_file_path or not os.path.exists(ar_file_path):
             return jsonify({'error': 'AR file not found'}), 400
 
         if not waive_file_path or not os.path.exists(waive_file_path):
             return jsonify({'error': 'Waive file not found'}), 400
+
+        if sot_file_path and not os.path.exists(sot_file_path):
+            return jsonify({'error': 'SOT file not found'}), 400
 
         # Load config (rates/subventions from Excel; period/penalty prefer UI)
         config_data = load_config()
@@ -926,7 +1513,7 @@ def calculate_with_waive():
 
         payload = _run_calculation_pipeline(
             ar_file_path, config_data, month_start, month_end, penalty_rate, last_month_label,
-            waive_file_path=waive_file_path
+            waive_file_path=waive_file_path, sot_file_path=sot_file_path
         )
         return jsonify(payload)
     except CalculationValidationError as e:

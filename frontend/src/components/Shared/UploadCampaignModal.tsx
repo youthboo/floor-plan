@@ -5,12 +5,14 @@ interface UploadCampaignModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUpload: (file: File) => void;
+  isSubmitting?: boolean;
 }
 
 export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
   isOpen,
   onClose,
   onUpload,
+  isSubmitting,
 }) => (
   <FileUploadModal
     isOpen={isOpen}
@@ -21,6 +23,9 @@ export const UploadCampaignModal: React.FC<UploadCampaignModalProps> = ({
     ariaLabel="Choose campaign file"
     fileFieldLabel="File"
     dropzonePlaceholder="Click to choose campaign file"
+    confirmLabel="Upload"
+    submittingLabel="Extracting campaigns..."
+    isSubmitting={isSubmitting}
   />
 );
 

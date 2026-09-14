@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, X } from 'lucide-react';
 import { Button } from '../ui/Button';
@@ -16,8 +16,13 @@ import {
 } from '../ui/Select';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
 import SelectDealersModal, { DEALERS } from '../Shared/SelectDealersModal';
-import { getMockCampaign, toISODate } from '../../data/mockCampaigns';
+import LoadingSpinner from '../Shared/LoadingSpinner';
+import ErrorAlert from '../Shared/ErrorAlert';
+import { fromISODate, toISODate } from '../../data/mockCampaigns';
+import { campaignService } from '../../services/api';
+import { getApiErrorMessage } from '../../utils/apiError';
 import { cn } from '../../lib/utils';
+import type { CampaignDetail } from '../../types';
 
 const AFFECTED_DEALERS_OPTIONS = ['All dealers', 'Selected dealers'];
 
@@ -79,17 +84,39 @@ export const NewCampaignPage: React.FC = () => {
   const navigate = useNavigate();
   const { campaignId } = useParams();
   const isEditMode = Boolean(campaignId);
-  const existingCampaign = isEditMode ? getMockCampaign(campaignId) : undefined;
 
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'campaign';
-  const [campaignName, setCampaignName] = useState(existingCampaign?.name ?? '');
-  const [freeDays, setFreeDays] = useState(String(existingCampaign?.freeDays ?? 15));
 
-  const nextConditionId = useRef((existingCampaign?.campaignConditions.length ?? 0) + 1);
-  const [conditions, setConditions] = useState<ConditionRow[]>(() =>
-    existingCampaign
-      ? existingCampaign.campaignConditions.map((row) => ({
+  const [isLoading, setIsLoading] = useState(isEditMode);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [campaignCode, setCampaignCode] = useState('');
+  const [campaignName, setCampaignName] = useState('');
+  const [freeDays, setFreeDays] = useState('15');
+  const [conditions, setConditions] = useState<ConditionRow[]>([createConditionRow(1)]);
+  const [dealerModalRowId, setDealerModalRowId] = useState<number | null>(null);
+  const [rateTiers, setRateTiers] = useState<RateTierRow[]>([createRateTierRow(1)]);
+
+  const nextConditionId = useRef(2);
+  const nextTierId = useRef(2);
+
+  useEffect(() => {
+    if (!isEditMode || !campaignId) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setLoadError(null);
+    campaignService
+      .get(campaignId)
+      .then((data) => {
+        if (cancelled) return;
+        setCampaignCode(data.code);
+        setCampaignName(data.name);
+        setFreeDays(String(data.freeDays));
+
+        const loadedConditions: ConditionRow[] = data.campaignConditions.map((row) => ({
           id: row.id,
           campaign: row.campaign,
           range: row.range,
@@ -99,15 +126,8 @@ export const NewCampaignPage: React.FC = () => {
           affectedDealers: row.affectedDealers,
           selectedDealers: row.selectedDealers ?? [],
           exception: row.exception ?? '',
-        }))
-      : [createConditionRow(1)]
-  );
-  const [dealerModalRowId, setDealerModalRowId] = useState<number | null>(null);
-
-  const nextTierId = useRef((existingCampaign?.rateByDayRange.length ?? 0) + 1);
-  const [rateTiers, setRateTiers] = useState<RateTierRow[]>(() =>
-    existingCampaign
-      ? existingCampaign.rateByDayRange.map((row) => ({
+        }));
+        const loadedTiers: RateTierRow[] = data.rateByDayRange.map((row) => ({
           id: row.id,
           range: row.range,
           startDay: String(row.startDay),
@@ -118,9 +138,23 @@ export const NewCampaignPage: React.FC = () => {
           effectiveEnd: toISODate(row.effectiveEnd),
           active: row.active,
           deliveryDate: row.deliveryDate,
-        }))
-      : [createRateTierRow(1)]
-  );
+        }));
+
+        setConditions(loadedConditions.length > 0 ? loadedConditions : [createConditionRow(1)]);
+        setRateTiers(loadedTiers.length > 0 ? loadedTiers : [createRateTierRow(1)]);
+        nextConditionId.current = loadedConditions.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+        nextTierId.current = loadedTiers.reduce((max, r) => Math.max(max, r.id), 0) + 1;
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(getApiErrorMessage(err, 'Failed to load campaign'));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditMode, campaignId]);
 
   const addConditionRow = () => {
     setConditions((prev) => [...prev, createConditionRow(nextConditionId.current++)]);
@@ -176,26 +210,76 @@ export const NewCampaignPage: React.FC = () => {
     navigate('/?tab=campaign');
   };
 
+  const buildPayload = (status: 'Active' | 'Draft'): CampaignDetail => {
+    const code = campaignCode.trim();
+    return {
+      code,
+      name: campaignName.trim(),
+      status,
+      freeDays: Number(freeDays) || 0,
+      units: 0,
+      campaignConditions: conditions.map((row) => ({
+        id: row.id,
+        campaign: code,
+        range: row.range,
+        model: row.model,
+        ddStart: row.ddStart ? fromISODate(row.ddStart) : '',
+        ddEnd: row.ddEnd ? fromISODate(row.ddEnd) : '',
+        affectedDealers: row.affectedDealers,
+        selectedDealers: row.selectedDealers,
+        exception: row.exception || null,
+      })),
+      rateByDayRange: rateTiers.map((row) => ({
+        id: row.id,
+        range: row.range,
+        startDay: Number(row.startDay) || 0,
+        endDay: Number(row.endDay) || 0,
+        rate: Number(row.rate) || 0,
+        plus: row.plus || '-',
+        effectiveStart: row.effectiveStart ? fromISODate(row.effectiveStart) : '',
+        effectiveEnd: row.effectiveEnd ? fromISODate(row.effectiveEnd) : '',
+        active: row.active,
+        deliveryDate: row.deliveryDate,
+      })),
+    };
+  };
+
+  const save = async (status: 'Active' | 'Draft') => {
+    const code = campaignCode.trim();
+    setSaveError(null);
+    if (!code) {
+      setSaveError('Campaign code is required.');
+      return;
+    }
+    if (!campaignName.trim()) {
+      setSaveError('Campaign name is required.');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      if (!isEditMode) {
+        const existing = await campaignService.list();
+        if (existing.some((c) => c.code === code)) {
+          setSaveError(`Campaign code "${code}" already exists — pick a different code.`);
+          setIsSaving(false);
+          return;
+        }
+      }
+      await campaignService.commit([buildPayload(status)]);
+      navigate('/?tab=campaign');
+    } catch (err) {
+      setSaveError(getApiErrorMessage(err, 'Failed to save campaign'));
+      setIsSaving(false);
+    }
+  };
+
   const handleSave = () => {
-    // TODO: Call API to save campaign
-    console.log(isEditMode ? 'Updating campaign:' : 'Saving campaign:', {
-      campaignName,
-      freeDays,
-      conditions,
-      rateTiers,
-    });
-    navigate('/?tab=campaign');
+    void save('Active');
   };
 
   const handleSaveDraft = () => {
-    // TODO: Call API to save campaign as a draft
-    console.log('Saving campaign as draft:', {
-      campaignName,
-      freeDays,
-      conditions,
-      rateTiers,
-    });
-    navigate('/?tab=campaign');
+    void save('Draft');
   };
 
   return (
@@ -230,7 +314,7 @@ export const NewCampaignPage: React.FC = () => {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                {isEditMode ? `Edit Campaign · ${existingCampaign?.name ?? campaignId}` : 'New Campaign'}
+                {isEditMode ? `Edit Campaign · ${campaignName || campaignId}` : 'New Campaign'}
               </h1>
               <p className="mt-1.5 text-sm text-slate-500">
                 {isEditMode
@@ -239,35 +323,62 @@ export const NewCampaignPage: React.FC = () => {
               </p>
             </div>
             <div className="flex flex-shrink-0 gap-3">
-              <Button variant="secondary" onClick={handleCancel}>
+              <Button variant="secondary" onClick={handleCancel} disabled={isSaving}>
                 Cancel
               </Button>
               <Button
                 variant="secondary"
                 className="border-amber-400 bg-amber-50 text-amber-700 hover:border-amber-500 hover:bg-amber-100"
                 onClick={handleSaveDraft}
+                disabled={isSaving || isLoading}
               >
-                Save as draft
+                {isSaving ? 'Saving...' : 'Save as draft'}
               </Button>
-              <Button variant="default" onClick={handleSave}>
-                Save
+              <Button variant="default" onClick={handleSave} disabled={isSaving || isLoading}>
+                {isSaving ? 'Saving...' : 'Save'}
               </Button>
             </div>
           </div>
+          {saveError && (
+            <div className="mt-4">
+              <ErrorAlert message={saveError} />
+            </div>
+          )}
         </div>
 
+        {isLoading ? (
+          <div className="py-10">
+            <LoadingSpinner />
+          </div>
+        ) : loadError ? (
+          <ErrorAlert message={loadError} />
+        ) : (
+          <>
         {/* Campaign Name Section */}
         <Card className="mb-6">
           <CardHeader className="px-6 py-5">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="campaign-name">Campaign Name</Label>
-              <Input
-                id="campaign-name"
-                type="text"
-                value={campaignName}
-                onChange={(e) => setCampaignName(e.target.value)}
-                placeholder="Enter campaign name"
-              />
+            <div className="flex flex-col gap-4 sm:flex-row">
+              <div className="flex flex-1 flex-col gap-2">
+                <Label htmlFor="campaign-code">Campaign Code</Label>
+                <Input
+                  id="campaign-code"
+                  type="text"
+                  value={campaignCode}
+                  onChange={(e) => setCampaignCode(e.target.value)}
+                  placeholder="e.g. 25004"
+                  disabled={isEditMode}
+                />
+              </div>
+              <div className="flex flex-1 flex-col gap-2">
+                <Label htmlFor="campaign-name">Campaign Name</Label>
+                <Input
+                  id="campaign-name"
+                  type="text"
+                  value={campaignName}
+                  onChange={(e) => setCampaignName(e.target.value)}
+                  placeholder="Enter campaign name"
+                />
+              </div>
             </div>
           </CardHeader>
         </Card>
@@ -559,6 +670,8 @@ export const NewCampaignPage: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+          </>
+        )}
           </div>
         </div>
       </main>

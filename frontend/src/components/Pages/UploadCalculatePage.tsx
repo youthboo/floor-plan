@@ -19,6 +19,8 @@ import LoadingSpinner from '../Shared/LoadingSpinner';
 import ErrorAlert from '../Shared/ErrorAlert';
 import {
   parseWorkbookFile,
+  parseSingleSheetFile,
+  type SheetPreview,
   type WorkbookPreview,
 } from '../../utils/parseWorkbook';
 import { validateARWorkbook } from '../../utils/validateARWorkbook';
@@ -85,7 +87,10 @@ export const UploadCalculatePage: React.FC = () => {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isWaiveModalOpen, setIsWaiveModalOpen] = useState(false);
   const [isSOTModalOpen, setIsSOTModalOpen] = useState(false);
-  const [sotFile, setSotFile] = useState<File | null>(null);
+  const [sotFileName, setSotFileName] = useState<string | null>(null);
+  const [sotFilePath, setSotFilePath] = useState<string | null>(null);
+  const [sotPreview, setSotPreview] = useState<SheetPreview | null>(null);
+  const [isSOTUploading, setIsSOTUploading] = useState(false);
   const [isParsing, setIsParsing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isWaiveRecalculating, setIsWaiveRecalculating] = useState(false);
@@ -144,7 +149,9 @@ export const UploadCalculatePage: React.FC = () => {
       setArFile(file);
       setWorkbook(preview);
       setUploadedFilePath(null);
-      setSotFile(null);
+      setSotFileName(null);
+      setSotFilePath(null);
+      setSotPreview(null);
     } catch {
       // Unreadable file — leave the previous AR upload (if any) in place.
       setPageError('Failed to read the uploaded file. Please try a valid .xlsx file.');
@@ -163,7 +170,9 @@ export const UploadCalculatePage: React.FC = () => {
     setIsEditingConfig(false);
     setIsWaiveModalOpen(false);
     setIsSOTModalOpen(false);
-    setSotFile(null);
+    setSotFileName(null);
+    setSotFilePath(null);
+    setSotPreview(null);
     resetCalculation();
     if (appConfig?.config) {
       setSystemConfig({
@@ -200,6 +209,7 @@ export const UploadCalculatePage: React.FC = () => {
 
       setIsUploading(false);
       const data = await calculate(filePath, {
+        sotFilePath: sotFilePath ?? undefined,
         runConfig: {
           month: systemConfig.month,
           year: systemConfig.year,
@@ -235,6 +245,7 @@ export const UploadCalculatePage: React.FC = () => {
       const waiveUpload = await fileService.uploadWaive(waiveFile);
       const data = await calculate(arPath, {
         waiveFilePath: waiveUpload.filePath,
+        sotFilePath: sotFilePath ?? undefined,
         runConfig: {
           month: systemConfig.month,
           year: systemConfig.year,
@@ -253,9 +264,30 @@ export const UploadCalculatePage: React.FC = () => {
     }
   };
 
-  const handleSOTUpload = (file: File) => {
+  const handleSOTUpload = async (file: File) => {
     setIsSOTModalOpen(false);
-    setSotFile(file);
+    setPageError(null);
+    setIsSOTUploading(true);
+
+    try {
+      const upload = await fileService.uploadSOT(file);
+      // Keep the user's own filename for display; the backend renames the
+      // file on disk (sot_input_<timestamp>.xlsx) — only its path matters
+      // for the calculation request.
+      setSotFileName(file.name);
+      setSotFilePath(upload.filePath);
+      try {
+        setSotPreview(await parseSingleSheetFile(file));
+      } catch {
+        // Preview is best-effort — the upload above already validated the
+        // file server-side, so a client-side parse hiccup shouldn't block it.
+        setSotPreview(null);
+      }
+    } catch (err) {
+      setPageError(getApiErrorMessage(err, 'SOT upload failed'));
+    } finally {
+      setIsSOTUploading(false);
+    }
   };
 
   const handleExport = async () => {
@@ -309,7 +341,9 @@ export const UploadCalculatePage: React.FC = () => {
           setPageError(null);
           setIsSOTModalOpen(true);
         }}
-        sotFileName={sotFile?.name}
+        sotFileName={sotFileName}
+        sotUploading={isSOTUploading}
+        sotPreview={sotPreview}
       />
     );
   } else {

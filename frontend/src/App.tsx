@@ -5,6 +5,7 @@ import UploadCalculatePage from './components/Pages/UploadCalculatePage';
 import PreviewARPage from './components/Pages/PreviewARPage';
 import NewCampaignPage from './components/Pages/NewCampaignPage';
 import CampaignDetailPage from './components/Pages/CampaignDetailPage';
+import ReviewCampaignsPage from './components/Pages/ReviewCampaignsPage';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/Tabs';
 
 const AppContent: React.FC = () => {
@@ -12,7 +13,7 @@ const AppContent: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') === 'campaign' ? 'campaign' : 'upload';
   const isFullPageRoute =
-    ['/new-campaign', '/preview-ar'].includes(location.pathname) ||
+    ['/new-campaign', '/preview-ar', '/review-campaigns'].includes(location.pathname) ||
     location.pathname.startsWith('/campaign-detail/') ||
     location.pathname.startsWith('/edit-campaign/');
 
@@ -23,6 +24,7 @@ const AppContent: React.FC = () => {
         <Route path="/preview-ar" element={<PreviewARPage />} />
         <Route path="/campaign-detail/:campaignId" element={<CampaignDetailPage />} />
         <Route path="/edit-campaign/:campaignId" element={<NewCampaignPage />} />
+        <Route path="/review-campaigns" element={<ReviewCampaignsPage />} />
       </Routes>
     );
   }

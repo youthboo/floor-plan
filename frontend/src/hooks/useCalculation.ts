@@ -9,7 +9,7 @@ interface UseCalculationReturn {
   error: string | null;
   calculate: (
     filePath: string,
-    options?: { waiveFilePath?: string; runConfig?: CalculationRunConfig }
+    options?: { waiveFilePath?: string; sotFilePath?: string; runConfig?: CalculationRunConfig }
   ) => Promise<CalculationResponse | null>;
   reset: () => void;
 }
@@ -21,7 +21,7 @@ export const useCalculation = (): UseCalculationReturn => {
 
   const calculate = async (
     filePath: string,
-    options?: { waiveFilePath?: string; runConfig?: CalculationRunConfig }
+    options?: { waiveFilePath?: string; sotFilePath?: string; runConfig?: CalculationRunConfig }
   ) => {
     try {
       setLoading(true);
@@ -31,9 +31,10 @@ export const useCalculation = (): UseCalculationReturn => {
         ? await calculationService.calculateWithWaive(
             filePath,
             options.waiveFilePath,
-            options.runConfig
+            options.runConfig,
+            options.sotFilePath
           )
-        : await calculationService.calculate(filePath, options?.runConfig);
+        : await calculationService.calculate(filePath, options?.runConfig, options?.sotFilePath);
 
       setResult(data);
       return data;

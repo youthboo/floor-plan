@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
@@ -10,67 +10,27 @@ import { Input } from '../ui/Input';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
 import AddCampaignsModal from '../Shared/AddCampaignsModal';
 import UploadCampaignModal from '../Shared/UploadCampaignModal';
+import LoadingSpinner from '../Shared/LoadingSpinner';
+import ErrorAlert from '../Shared/ErrorAlert';
 import { cn } from '../../lib/utils';
+import { campaignService } from '../../services/api';
+import { getApiErrorMessage } from '../../utils/apiError';
+import type { CampaignSummary } from '../../types';
 
-type CampaignStatus = 'Active' | 'Default' | 'Draft';
 type StatusFilter = 'all' | 'active' | 'draft';
-
-interface Campaign {
-  code: string;
-  name: string;
-  models: string;
-  drawdownPeriod: string;
-  status: CampaignStatus;
-}
 
 const PAGE_SIZE = 5;
 
-const mockCampaigns: Campaign[] = [
-  {
-    code: '0001',
-    name: 'Default',
-    models: '—',
-    drawdownPeriod: '—',
-    status: 'Default',
-  },
-  {
-    code: '24001',
-    name: 'Songkran EV Drawdown',
-    models: 'SEALION6, DOLPHIN, ATTO3',
-    drawdownPeriod: '25-04-26 → 31-05-26',
-    status: 'Active',
-  },
-  {
-    code: '24002',
-    name: 'Dealer Group Incentive',
-    models: 'SEALION6, DOLPHIN, SEAL5',
-    drawdownPeriod: '25-04-26 → 31-05-26',
-    status: 'Active',
-  },
-  {
-    code: '24003',
-    name: 'Extended Floorplan 120',
-    models: 'SEALION6, DOLPHIN',
-    drawdownPeriod: '15-02-26 → 31-03-26',
-    status: 'Active',
-  },
-  {
-    code: '24004',
-    name: 'New Campaign',
-    models: 'SEALION6, DOLPHIN, SEAL5',
-    drawdownPeriod: '25-04-26 → 31-05-26',
-    status: 'Active',
-  },
-];
-
-function statusBadgeVariant(status: CampaignStatus): 'active' | 'inactive' {
+function statusBadgeVariant(status: string): 'active' | 'inactive' {
   if (status === 'Draft') return 'inactive';
   return 'active';
 }
 
 export const CampaignManagementPage: React.FC = () => {
   const navigate = useNavigate();
-  const [campaigns, setCampaigns] = useState<Campaign[]>(mockCampaigns);
+  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isManageMode, setIsManageMode] = useState(false);
   const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -78,6 +38,42 @@ export const CampaignManagementPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [isAddCampaignsModalOpen, setIsAddCampaignsModalOpen] = useState(false);
   const [isUploadCampaignModalOpen, setIsUploadCampaignModalOpen] = useState(false);
+  const [isImportingFile, setIsImportingFile] = useState(false);
+  const [isBulkActionInProgress, setIsBulkActionInProgress] = useState(false);
+  const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+
+  const refetchCampaigns = useCallback(async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const data = await campaignService.list();
+      setCampaigns(data);
+    } catch (err) {
+      setLoadError(getApiErrorMessage(err, 'Failed to load campaigns'));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setLoadError(null);
+    campaignService
+      .list()
+      .then((data) => {
+        if (!cancelled) setCampaigns(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setLoadError(getApiErrorMessage(err, 'Failed to load campaigns'));
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const activeCampaigns = campaigns.filter((c) => c.status !== 'Draft').length;
 
@@ -129,8 +125,19 @@ export const CampaignManagementPage: React.FC = () => {
     navigate('/new-campaign');
   };
 
-  const handleUploadCampaign = (_file: File) => {
-    setIsUploadCampaignModalOpen(false);
+  const handleUploadCampaign = async (file: File) => {
+    setLoadError(null);
+    setIsImportingFile(true);
+    try {
+      const importResult = await campaignService.importFile(file);
+      setIsUploadCampaignModalOpen(false);
+      navigate('/review-campaigns', { state: { importResult } });
+    } catch (err) {
+      setLoadError(getApiErrorMessage(err, 'Campaign file import failed'));
+      setIsUploadCampaignModalOpen(false);
+    } finally {
+      setIsImportingFile(false);
+    }
   };
 
   const enterManageMode = () => {
@@ -141,6 +148,7 @@ export const CampaignManagementPage: React.FC = () => {
   const exitManageMode = () => {
     setIsManageMode(false);
     setSelectedCodes([]);
+    setBulkActionError(null);
   };
 
   const toggleSelectAllOnPage = () => {
@@ -162,25 +170,57 @@ export const CampaignManagementPage: React.FC = () => {
     );
   };
 
-  const handleDuplicate = () => {
-    if (selectedCodes.length === 0) return;
-    const selected = campaigns.filter((c) => selectedCodes.includes(c.code));
-    const duplicates = selected.map((campaign, index) => ({
-      ...campaign,
-      code: `${campaign.code}-COPY${index + 1}`,
-      name: `${campaign.name} (Copy)`,
-      status: campaign.status === 'Default' ? ('Active' as const) : campaign.status,
-    }));
-    setCampaigns((prev) => [...prev, ...duplicates]);
-    setSelectedCodes([]);
+  const nextAvailableCode = (base: string, taken: Set<string>): string => {
+    let candidate = `${base}-COPY`;
+    let suffix = 1;
+    while (taken.has(candidate)) {
+      suffix += 1;
+      candidate = `${base}-COPY${suffix}`;
+    }
+    taken.add(candidate);
+    return candidate;
   };
 
-  const handleDelete = () => {
+  const handleDuplicate = async () => {
     if (selectedCodes.length === 0) return;
-    setCampaigns((prev) =>
-      prev.filter((c) => c.status === 'Default' || !selectedCodes.includes(c.code))
-    );
-    setSelectedCodes([]);
+    setBulkActionError(null);
+    setIsBulkActionInProgress(true);
+    try {
+      const takenCodes = new Set(campaigns.map((c) => c.code));
+      const details = await Promise.all(selectedCodes.map((code) => campaignService.get(code)));
+      const duplicates = details.map((detail) => ({
+        ...detail,
+        code: nextAvailableCode(detail.code, takenCodes),
+        name: `${detail.name} (Copy)`,
+        campaignConditions: detail.campaignConditions.map((row) => ({ ...row })),
+        rateByDayRange: detail.rateByDayRange.map((row) => ({ ...row })),
+      }));
+      await campaignService.commit(duplicates);
+      await refetchCampaigns();
+      setSelectedCodes([]);
+    } catch (err) {
+      setBulkActionError(getApiErrorMessage(err, 'Failed to duplicate campaign(s)'));
+    } finally {
+      setIsBulkActionInProgress(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (selectedCodes.length === 0) return;
+    setBulkActionError(null);
+    setIsBulkActionInProgress(true);
+    try {
+      for (const code of selectedCodes) {
+        await campaignService.remove(code);
+      }
+      await refetchCampaigns();
+      setSelectedCodes([]);
+    } catch (err) {
+      setBulkActionError(getApiErrorMessage(err, 'Failed to delete campaign(s)'));
+      await refetchCampaigns();
+    } finally {
+      setIsBulkActionInProgress(false);
+    }
   };
 
   const statusFilters: { id: StatusFilter; label: string }[] = [
@@ -226,21 +266,26 @@ export const CampaignManagementPage: React.FC = () => {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={handleDuplicate}
-                  disabled={selectedCodes.length === 0}
+                  onClick={() => void handleDuplicate()}
+                  disabled={selectedCodes.length === 0 || isBulkActionInProgress}
                 >
-                  Duplicate
+                  {isBulkActionInProgress ? 'Working...' : 'Duplicate'}
                 </Button>
                 <Button
                   variant="secondary"
                   size="sm"
                   className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-                  onClick={handleDelete}
-                  disabled={selectedCodes.length === 0}
+                  onClick={() => void handleDelete()}
+                  disabled={selectedCodes.length === 0 || isBulkActionInProgress}
                 >
-                  Delete
+                  {isBulkActionInProgress ? 'Working...' : 'Delete'}
                 </Button>
-                <Button variant="secondary" size="sm" onClick={exitManageMode}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={exitManageMode}
+                  disabled={isBulkActionInProgress}
+                >
                   Done
                 </Button>
               </div>
@@ -289,6 +334,14 @@ export const CampaignManagementPage: React.FC = () => {
               </Tabs>
             </div>
 
+            {loadError && <ErrorAlert message={loadError} />}
+            {bulkActionError && <ErrorAlert message={bulkActionError} />}
+
+            {isLoading ? (
+              <div className="py-10">
+                <LoadingSpinner />
+              </div>
+            ) : (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -316,7 +369,9 @@ export const CampaignManagementPage: React.FC = () => {
                       colSpan={isManageMode ? 6 : 6}
                       className="py-10 text-center text-sm text-slate-500"
                     >
-                      No campaigns match your search
+                      {campaigns.length === 0
+                        ? 'No campaigns yet — add one or import a campaign file to get started.'
+                        : 'No campaigns match your search'}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -366,33 +421,36 @@ export const CampaignManagementPage: React.FC = () => {
                 )}
               </TableBody>
             </Table>
+            )}
 
-            <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-slate-500">
-                Showing {pageStart}-{pageEnd} of {filteredCampaigns.length} campaigns
-              </p>
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="ghost"
-                  className="h-auto px-2 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:pointer-events-none disabled:text-slate-300"
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage <= 1}
-                >
-                  ← Prev
-                </Button>
-                <span className="text-sm font-semibold text-slate-900">
-                  Page {currentPage} of {totalPages}
-                </span>
-                <Button
-                  variant="ghost"
-                  className="h-auto px-2 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:pointer-events-none disabled:text-slate-300"
-                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage >= totalPages}
-                >
-                  Next →
-                </Button>
+            {!isLoading && (
+              <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-slate-500">
+                  Showing {pageStart}-{pageEnd} of {filteredCampaigns.length} campaigns
+                </p>
+                <div className="flex items-center gap-3">
+                  <Button
+                    variant="ghost"
+                    className="h-auto px-2 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:pointer-events-none disabled:text-slate-300"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage <= 1}
+                  >
+                    ← Prev
+                  </Button>
+                  <span className="text-sm font-semibold text-slate-900">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="ghost"
+                    className="h-auto px-2 py-1 text-sm font-medium text-slate-600 hover:text-slate-900 disabled:pointer-events-none disabled:text-slate-300"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                  >
+                    Next →
+                  </Button>
+                </div>
               </div>
-            </div>
+            )}
           </CardContent>
         </Card>
 
@@ -407,6 +465,7 @@ export const CampaignManagementPage: React.FC = () => {
           isOpen={isUploadCampaignModalOpen}
           onClose={() => setIsUploadCampaignModalOpen(false)}
           onUpload={handleUploadCampaign}
+          isSubmitting={isImportingFile}
         />
       </div>
     </div>
