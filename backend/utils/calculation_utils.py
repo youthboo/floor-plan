@@ -347,8 +347,11 @@ def calculate_detailed_charge(
     due_date = pd.to_datetime(row.get('Due Date'), errors='coerce')
     sot_start_date = pd.to_datetime(row.get('SOT Start Date'), errors='coerce')
     free_days = int(row.get('Free Days', 0))
-    # A matched Campaign Master quota row overrides the standard rate table for this VIN.
-    rate_ranges = row.get('_CampaignRateOverride') or rate_ranges
+    # A matched Campaign Master quota row overrides the standard rate table for this VIN —
+    # even when that campaign's own table is empty (`is not None`, not truthiness: an empty
+    # list must stay empty, not silently fall back to the standard table).
+    campaign_rate_override = row.get('_CampaignRateOverride')
+    rate_ranges = campaign_rate_override if campaign_rate_override is not None else rate_ranges
 
     if pd.isna(alloc_date):
         return pd.Series([0.0, 0.0, 0.0, 0, '', '', 0, 0])

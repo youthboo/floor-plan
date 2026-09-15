@@ -556,7 +556,7 @@ export const CampaignDetailPage: React.FC = () => {
                                       className={cn(
                                         'block w-56 rounded-md border px-3 py-2 text-left text-xs leading-relaxed transition-colors',
                                         isEditing
-                                          ? 'cursor-pointer border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100'
+                                          ? 'cursor-pointer border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                                           : 'cursor-default border-transparent bg-transparent',
                                         row.selectedDealers.length > 0 ? 'text-slate-700' : 'text-slate-400'
                                       )}
@@ -595,7 +595,7 @@ export const CampaignDetailPage: React.FC = () => {
                                       className={cn(
                                         'block w-56 rounded-md border px-3 py-2 text-left text-xs leading-relaxed transition-colors',
                                         isEditing
-                                          ? 'cursor-pointer border-amber-300 bg-amber-50 hover:border-amber-400 hover:bg-amber-100'
+                                          ? 'cursor-pointer border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                                           : 'cursor-default border-transparent bg-transparent',
                                         row.exceptionDealers.length > 0 ? 'text-slate-700' : 'text-slate-400'
                                       )}
