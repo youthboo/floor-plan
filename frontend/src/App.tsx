@@ -2,18 +2,18 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, useLocation, useSearchParams } from 'react-router-dom';
 import CampaignManagementPage from './components/Pages/CampaignManagementPage';
 import UploadCalculatePage from './components/Pages/UploadCalculatePage';
-import PreviewARPage from './components/Pages/PreviewARPage';
 import NewCampaignPage from './components/Pages/NewCampaignPage';
 import CampaignDetailPage from './components/Pages/CampaignDetailPage';
 import ReviewCampaignsPage from './components/Pages/ReviewCampaignsPage';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/Tabs';
+import { Tabs, TabsContent } from './components/ui/Tabs';
+import AppTabsHeader from './components/Shared/AppTabsHeader';
 
 const AppContent: React.FC = () => {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') === 'campaign' ? 'campaign' : 'upload';
   const isFullPageRoute =
-    ['/new-campaign', '/preview-ar', '/review-campaigns'].includes(location.pathname) ||
+    ['/new-campaign', '/review-campaigns'].includes(location.pathname) ||
     location.pathname.startsWith('/campaign-detail/') ||
     location.pathname.startsWith('/edit-campaign/');
 
@@ -21,7 +21,6 @@ const AppContent: React.FC = () => {
     return (
       <Routes>
         <Route path="/new-campaign" element={<NewCampaignPage />} />
-        <Route path="/preview-ar" element={<PreviewARPage />} />
         <Route path="/campaign-detail/:campaignId" element={<CampaignDetailPage />} />
         <Route path="/edit-campaign/:campaignId" element={<NewCampaignPage />} />
         <Route path="/review-campaigns" element={<ReviewCampaignsPage />} />
@@ -30,29 +29,22 @@ const AppContent: React.FC = () => {
   }
 
   return (
-    <Tabs value={activeTab} onValueChange={(value) => setSearchParams({ tab: value })}>
-      <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
-        <div className="flex items-center justify-center px-4 py-4">
-          <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">
-            <TabsTrigger variant="nav" value="campaign">
-              Campaign Management
-            </TabsTrigger>
-            <TabsTrigger variant="nav" value="upload">
-              Upload & Calculate
-            </TabsTrigger>
-          </TabsList>
-        </div>
-      </header>
-
-      <main className="flex-1">
-        <TabsContent value="campaign">
-          <CampaignManagementPage />
-        </TabsContent>
-        <TabsContent value="upload">
-          <UploadCalculatePage />
-        </TabsContent>
-      </main>
-    </Tabs>
+    <>
+      <AppTabsHeader
+        activeTab={activeTab}
+        onTabChange={(value) => setSearchParams({ tab: value })}
+      />
+      <Tabs value={activeTab} onValueChange={(value) => setSearchParams({ tab: value })}>
+        <main className="flex-1">
+          <TabsContent value="campaign">
+            <CampaignManagementPage />
+          </TabsContent>
+          <TabsContent value="upload">
+            <UploadCalculatePage />
+          </TabsContent>
+        </main>
+      </Tabs>
+    </>
   );
 };
 

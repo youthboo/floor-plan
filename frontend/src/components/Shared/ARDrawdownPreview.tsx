@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
 import { cn } from '../../lib/utils';
 import type { CellValue, SheetPreview, WorkbookPreview } from '../../utils/parseWorkbook';
@@ -102,46 +103,38 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
           </TabsList>
         </Tabs>
 
-        <div className="max-h-[28rem] overflow-auto">
-          {currentSheet.headers.length === 0 ? (
-            <p className="py-10 text-center text-sm text-slate-500">This sheet is empty.</p>
-          ) : (
-            <table className="w-full caption-bottom text-sm">
-              <thead className="sticky top-0 border-b border-gray-200 bg-gray-50">
-                <tr>
-                  {currentSheet.headers.map((header, index) => (
-                    <th
-                      key={`${header}-${index}`}
-                      className="h-12 whitespace-nowrap px-6 py-3 text-left align-middle text-xs font-bold uppercase tracking-wider text-gray-700"
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row, rowIndex) => (
-                  <tr
-                    key={rowIndex}
-                    className="border-b border-gray-100 transition-colors hover:bg-gray-50"
-                  >
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={cellIndex}
-                        className={cn(
-                          'whitespace-nowrap px-6 py-4 align-middle text-slate-700',
-                          isNumericCell(cell) && 'text-right font-semibold text-slate-900'
-                        )}
-                      >
-                        {formatCell(cell)}
-                      </td>
-                    ))}
-                  </tr>
+        {currentSheet.headers.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-500">This sheet is empty.</p>
+        ) : (
+          <Table containerClassName="max-h-[28rem] border-0 rounded-none bg-transparent">
+            <TableHeader className="sticky top-0">
+              <TableRow>
+                {currentSheet.headers.map((header, index) => (
+                  <TableHead key={`${header}-${index}`} className="whitespace-nowrap">
+                    {header}
+                  </TableHead>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visibleRows.map((row, rowIndex) => (
+                <TableRow key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <TableCell
+                      key={cellIndex}
+                      className={cn(
+                        'whitespace-nowrap text-slate-700',
+                        isNumericCell(cell) && 'text-right font-semibold text-slate-900'
+                      )}
+                    >
+                      {formatCell(cell)}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </div>
 
       {sotPreview && (
@@ -158,46 +151,38 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
             </p>
           </div>
 
-          <div className="max-h-[20rem] overflow-auto">
-            {sotPreview.headers.length === 0 ? (
-              <p className="py-10 text-center text-sm text-slate-500">This file is empty.</p>
-            ) : (
-              <table className="w-full caption-bottom text-sm">
-                <thead className="sticky top-0 border-b border-gray-200 bg-gray-50">
-                  <tr>
-                    {sotPreview.headers.map((header, index) => (
-                      <th
-                        key={`${header}-${index}`}
-                        className="h-12 whitespace-nowrap px-6 py-3 text-left align-middle text-xs font-bold uppercase tracking-wider text-gray-700"
-                      >
-                        {header}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sotPreview.rows.map((row, rowIndex) => (
-                    <tr
-                      key={rowIndex}
-                      className="border-b border-gray-100 transition-colors hover:bg-gray-50"
-                    >
-                      {row.map((cell, cellIndex) => (
-                        <td
-                          key={cellIndex}
-                          className={cn(
-                            'whitespace-nowrap px-6 py-4 align-middle text-slate-700',
-                            cellIndex === 0 && 'font-semibold text-slate-900'
-                          )}
-                        >
-                          {formatCell(cell)}
-                        </td>
-                      ))}
-                    </tr>
+          {sotPreview.headers.length === 0 ? (
+            <p className="py-10 text-center text-sm text-slate-500">This file is empty.</p>
+          ) : (
+            <Table containerClassName="max-h-[20rem] border-0 rounded-none bg-transparent">
+              <TableHeader className="sticky top-0">
+                <TableRow>
+                  {sotPreview.headers.map((header, index) => (
+                    <TableHead key={`${header}-${index}`} className="whitespace-nowrap">
+                      {header}
+                    </TableHead>
                   ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sotPreview.rows.map((row, rowIndex) => (
+                  <TableRow key={rowIndex}>
+                    {row.map((cell, cellIndex) => (
+                      <TableCell
+                        key={cellIndex}
+                        className={cn(
+                          'whitespace-nowrap text-slate-700',
+                          cellIndex === 0 && 'font-semibold text-slate-900'
+                        )}
+                      >
+                        {formatCell(cell)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </div>
       )}
 

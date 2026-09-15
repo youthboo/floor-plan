@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
@@ -14,12 +14,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '../ui/Select';
-import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
+import AppTabsHeader from '../Shared/AppTabsHeader';
+import BackLink from '../Shared/BackLink';
 import SelectDealersModal, { DEALERS } from '../Shared/SelectDealersModal';
 import LoadingSpinner from '../Shared/LoadingSpinner';
 import ErrorAlert from '../Shared/ErrorAlert';
 import { fromISODate, toISODate } from '../../data/mockCampaigns';
 import { campaignService } from '../../services/api';
+import { useAsyncData } from '../../hooks/useAsyncData';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { cn } from '../../lib/utils';
 import type { CampaignDetail } from '../../types';
@@ -88,8 +90,6 @@ export const NewCampaignPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'campaign';
 
-  const [isLoading, setIsLoading] = useState(isEditMode);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -103,15 +103,13 @@ export const NewCampaignPage: React.FC = () => {
   const nextConditionId = useRef(2);
   const nextTierId = useRef(2);
 
-  useEffect(() => {
-    if (!isEditMode || !campaignId) return;
-    let cancelled = false;
-    setIsLoading(true);
-    setLoadError(null);
-    campaignService
-      .get(campaignId)
-      .then((data) => {
-        if (cancelled) return;
+  const { isLoading, error: loadError } = useAsyncData(
+    () => campaignService.get(campaignId!),
+    [campaignId],
+    {
+      enabled: isEditMode && Boolean(campaignId),
+      errorMessage: 'Failed to load campaign',
+      onSuccess: (data) => {
         setCampaignCode(data.code);
         setCampaignName(data.name);
         setFreeDays(String(data.freeDays));
@@ -144,17 +142,9 @@ export const NewCampaignPage: React.FC = () => {
         setRateTiers(loadedTiers.length > 0 ? loadedTiers : [createRateTierRow(1)]);
         nextConditionId.current = loadedConditions.reduce((max, r) => Math.max(max, r.id), 0) + 1;
         nextTierId.current = loadedTiers.reduce((max, r) => Math.max(max, r.id), 0) + 1;
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(getApiErrorMessage(err, 'Failed to load campaign'));
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isEditMode, campaignId]);
+      },
+    }
+  );
 
   const addConditionRow = () => {
     setConditions((prev) => [...prev, createConditionRow(nextConditionId.current++)]);
@@ -284,33 +274,14 @@ export const NewCampaignPage: React.FC = () => {
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
-        <div className="flex items-center justify-center px-4 py-4">
-          <Tabs value={activeTab} onValueChange={handleTabChange}>
-            <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">
-              <TabsTrigger variant="nav" value="campaign">
-                Campaign Management
-              </TabsTrigger>
-              <TabsTrigger variant="nav" value="upload">
-                Upload & Calculate
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      </header>
+      <AppTabsHeader activeTab={activeTab} onTabChange={handleTabChange} />
 
       <main className="flex-1">
         <div className="w-full bg-white py-10">
           <div className="mx-auto max-w-7xl px-6 sm:px-10">
             {/* Header */}
         <div className="mb-8">
-          <button
-            onClick={handleCancel}
-            className="mb-4 inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            All campaigns
-          </button>
+          <BackLink onClick={handleCancel} />
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">

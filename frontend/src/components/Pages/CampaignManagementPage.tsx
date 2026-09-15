@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
@@ -15,7 +15,7 @@ import ErrorAlert from '../Shared/ErrorAlert';
 import { cn } from '../../lib/utils';
 import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
-import type { CampaignSummary } from '../../types';
+import { useAsyncData } from '../../hooks/useAsyncData';
 
 type StatusFilter = 'all' | 'active' | 'draft';
 
@@ -28,9 +28,13 @@ function statusBadgeVariant(status: string): 'active' | 'inactive' {
 
 export const CampaignManagementPage: React.FC = () => {
   const navigate = useNavigate();
-  const [campaigns, setCampaigns] = useState<CampaignSummary[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const {
+    data: campaignsData,
+    isLoading,
+    error: listLoadError,
+    refetch: refetchCampaignList,
+  } = useAsyncData(() => campaignService.list(), [], { errorMessage: 'Failed to load campaigns' });
+  const campaigns = campaignsData ?? [];
   const [isManageMode, setIsManageMode] = useState(false);
   const [selectedCodes, setSelectedCodes] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -41,39 +45,14 @@ export const CampaignManagementPage: React.FC = () => {
   const [isImportingFile, setIsImportingFile] = useState(false);
   const [isBulkActionInProgress, setIsBulkActionInProgress] = useState(false);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
-
-  const refetchCampaigns = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
-    try {
-      const data = await campaignService.list();
-      setCampaigns(data);
-    } catch (err) {
-      setLoadError(getApiErrorMessage(err, 'Failed to load campaigns'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    setIsLoading(true);
-    setLoadError(null);
-    campaignService
-      .list()
-      .then((data) => {
-        if (!cancelled) setCampaigns(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setLoadError(getApiErrorMessage(err, 'Failed to load campaigns'));
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  // Shares one error slot with the list-load error, matching pre-refactor behavior
+  // where both were the same state variable (so a refetch clears either).
+  const [importError, setImportError] = useState<string | null>(null);
+  const loadError = listLoadError || importError;
+  const refetchCampaigns = async () => {
+    setImportError(null);
+    await refetchCampaignList();
+  };
 
   const activeCampaigns = campaigns.filter((c) => c.status !== 'Draft').length;
 
@@ -126,14 +105,14 @@ export const CampaignManagementPage: React.FC = () => {
   };
 
   const handleUploadCampaign = async (file: File) => {
-    setLoadError(null);
+    setImportError(null);
     setIsImportingFile(true);
     try {
       const importResult = await campaignService.importFile(file);
       setIsUploadCampaignModalOpen(false);
       navigate('/review-campaigns', { state: { importResult } });
     } catch (err) {
-      setLoadError(getApiErrorMessage(err, 'Campaign file import failed'));
+      setImportError(getApiErrorMessage(err, 'Campaign file import failed'));
       setIsUploadCampaignModalOpen(false);
     } finally {
       setIsImportingFile(false);

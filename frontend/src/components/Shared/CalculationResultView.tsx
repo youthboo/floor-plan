@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { cn } from '../../lib/utils';
 import { formatNumber } from '../../utils/formatters';
@@ -146,38 +147,32 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
             subvention campaigns
           </p>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Campaign
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                  VINs
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {safeCampaigns.map((item) => (
-                <tr key={item.campaign} className="border-t border-slate-100">
-                  <td className="px-6 py-3 text-slate-800">{item.campaign}</td>
-                  <td className="px-6 py-3 text-right font-semibold text-slate-900">
-                    {item.vins.toLocaleString('en-US')}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t border-slate-200 bg-slate-50">
-                <td className="px-6 py-3 font-semibold text-slate-900">Total</td>
-                <td className="px-6 py-3 text-right font-semibold text-slate-900">
-                  {safeStats.rowsProcessed.toLocaleString('en-US')}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
+        <Table containerClassName="border-0 rounded-none bg-transparent">
+          <TableHeader className="border-b-0 bg-slate-50">
+            <TableRow className="border-b-0 hover:bg-transparent">
+              <TableHead className="text-slate-500">Campaign</TableHead>
+              <TableHead className="text-right text-slate-500">VINs</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {safeCampaigns.map((item) => (
+              <TableRow key={item.campaign} className="border-b-0 border-t border-slate-100 hover:bg-transparent">
+                <TableCell className="px-6 py-3 text-slate-800">{item.campaign}</TableCell>
+                <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
+                  {item.vins.toLocaleString('en-US')}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          <TableFooter className="border-slate-200 bg-slate-50">
+            <TableRow className="hover:bg-transparent">
+              <TableCell className="px-6 py-3 font-semibold text-slate-900">Total</TableCell>
+              <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
+                {safeStats.rowsProcessed.toLocaleString('en-US')}
+              </TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
       </div>
 
       {waiveRows.length > 0 && (
@@ -193,52 +188,38 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
               VINs with an approved waive amount applied from the uploaded waive file
             </p>
           </div>
-          <div className="max-h-[28rem] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    VIN Number
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Waive Amount
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Reason
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    RAM Charge (After Waive)
-                  </th>
-                  <th className="px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer Charge (After Waive)
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {waiveRows.map((row) => (
-                  <tr key={row.vinNumber} className="border-t border-slate-100">
-                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
-                      {row.vinNumber}
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{row.dealer}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                      {formatNumber(row.waiveAmount, 2)}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{row.reason}</td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {formatNumber(row.ramChargeAfter, 2)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-slate-700">
-                      {formatNumber(row.dealerChargeAfter, 2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table containerClassName="max-h-[28rem] border-0 rounded-none bg-transparent">
+            <TableHeader className="sticky top-0 border-b-0 bg-slate-50">
+              <TableRow className="border-b-0 hover:bg-transparent">
+                <TableHead className="text-slate-500">VIN Number</TableHead>
+                <TableHead className="text-slate-500">Dealer</TableHead>
+                <TableHead className="text-right text-slate-500">Waive Amount</TableHead>
+                <TableHead className="text-slate-500">Reason</TableHead>
+                <TableHead className="text-right text-slate-500">RAM Charge (After Waive)</TableHead>
+                <TableHead className="text-right text-slate-500">Dealer Charge (After Waive)</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {waiveRows.map((row) => (
+                <TableRow key={row.vinNumber} className="border-b-0 border-t border-slate-100 hover:bg-transparent">
+                  <TableCell className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
+                    {row.vinNumber}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-slate-700">{row.dealer}</TableCell>
+                  <TableCell className="px-4 py-3 text-right font-semibold text-slate-900">
+                    {formatNumber(row.waiveAmount, 2)}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-slate-600">{row.reason}</TableCell>
+                  <TableCell className="px-4 py-3 text-right text-slate-700">
+                    {formatNumber(row.ramChargeAfter, 2)}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-right text-slate-700">
+                    {formatNumber(row.dealerChargeAfter, 2)}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -255,58 +236,42 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
               {mismatchCount} VINs assigned to a campaign that does not match the campaign conditions
             </p>
           </div>
-          <div className="max-h-[28rem] overflow-auto bg-white/70">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-orange-50/80">
-                <tr>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    VIN Number
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Model
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Drawdown
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-red-600">
-                    Assigned to
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-emerald-600">
-                    Should be
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Reason
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {safeMismatches.map((row) => (
-                  <tr key={row.vinNumber} className="border-t border-orange-100">
-                    <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
-                      {row.vinNumber}
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{row.dealer}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-700">{row.model}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-700">{row.drawdown}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-800">
-                        {row.assignedTo}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
-                        {row.shouldBe}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{row.reason}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table containerClassName="max-h-[28rem] border-0 rounded-none bg-white/70">
+            <TableHeader className="sticky top-0 border-b-0 bg-orange-50/80">
+              <TableRow className="border-b-0 hover:bg-transparent">
+                <TableHead className="text-slate-500">VIN Number</TableHead>
+                <TableHead className="text-slate-500">Dealer</TableHead>
+                <TableHead className="text-slate-500">Model</TableHead>
+                <TableHead className="text-slate-500">Drawdown</TableHead>
+                <TableHead className="text-red-600">Assigned to</TableHead>
+                <TableHead className="text-emerald-600">Should be</TableHead>
+                <TableHead className="text-slate-500">Reason</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {safeMismatches.map((row) => (
+                <TableRow key={row.vinNumber} className="border-b-0 border-t border-orange-100 hover:bg-transparent">
+                  <TableCell className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
+                    {row.vinNumber}
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-slate-700">{row.dealer}</TableCell>
+                  <TableCell className="whitespace-nowrap px-4 py-3 text-slate-700">{row.model}</TableCell>
+                  <TableCell className="whitespace-nowrap px-4 py-3 text-slate-700">{row.drawdown}</TableCell>
+                  <TableCell className="px-4 py-3">
+                    <span className="inline-flex rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-800">
+                      {row.assignedTo}
+                    </span>
+                  </TableCell>
+                  <TableCell className="px-4 py-3">
+                    <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                      {row.shouldBe}
+                    </span>
+                  </TableCell>
+                  <TableCell className="px-4 py-3 text-slate-600">{row.reason}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
       )}
 
@@ -332,136 +297,114 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
 
           <div className="max-h-[28rem] overflow-auto">
           <TabsContent value="summary">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Description
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Amount (THB)
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-0 border-b-0 bg-slate-50">
+                <TableRow className="border-b-0 hover:bg-transparent">
+                  <TableHead className="text-slate-500">Description</TableHead>
+                  <TableHead className="text-right text-slate-500">Amount (THB)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {summaryRows.map((row) => (
-                  <tr
+                  <TableRow
                     key={row.description}
                     className={cn(
-                      'border-t border-slate-100',
+                      'border-b-0 border-t border-slate-100 hover:bg-transparent',
                       row.description === 'Total' && 'bg-slate-50 font-semibold'
                     )}
                   >
-                    <td className="px-6 py-3 text-slate-800">{row.description}</td>
-                    <td className="px-6 py-3 text-right font-semibold text-slate-900">
+                    <TableCell className="px-6 py-3 text-slate-800">{row.description}</TableCell>
+                    <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
                       {formatNumber(row.amount, 2)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
+              </TableBody>
             </table>
           </TabsContent>
 
           <TabsContent value="arDetail">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr>
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-0 border-b-0 bg-slate-50">
+                <TableRow className="border-b-0 hover:bg-transparent">
                   {detailColumns.map((col) => (
-                    <th
-                      key={col}
-                      className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500"
-                    >
+                    <TableHead key={col} className="whitespace-nowrap text-slate-500">
                       {col}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {result.detailRecords?.map((row, index) => (
-                  <tr key={index} className="border-t border-slate-100 hover:bg-slate-50">
+                  <TableRow key={index} className="border-b-0 border-t border-slate-100 hover:bg-slate-50">
                     {detailColumns.map((col) => (
-                      <td key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                      <TableCell key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
                         {cellValue(row[col])}
-                      </td>
+                      </TableCell>
                     ))}
-                  </tr>
+                  </TableRow>
                 ))}
-              </tbody>
+              </TableBody>
             </table>
           </TabsContent>
 
           <TabsContent value="byDealer">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer Code
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer Name
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    VINs
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    AR Amount
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    RAM Charge
-                  </th>
-                  <th className="px-6 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">
-                    Dealer Charge
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-0 border-b-0 bg-slate-50">
+                <TableRow className="border-b-0 hover:bg-transparent">
+                  <TableHead className="text-slate-500">Dealer Code</TableHead>
+                  <TableHead className="text-slate-500">Dealer Name</TableHead>
+                  <TableHead className="text-right text-slate-500">VINs</TableHead>
+                  <TableHead className="text-right text-slate-500">AR Amount</TableHead>
+                  <TableHead className="text-right text-slate-500">RAM Charge</TableHead>
+                  <TableHead className="text-right text-slate-500">Dealer Charge</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {(result.summaryByDealerCode ?? []).map((row) => (
-                  <tr key={row.dealerCode} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-6 py-3 font-semibold text-slate-900">{row.dealerCode}</td>
-                    <td className="px-6 py-3 text-slate-700">{row.dealerName}</td>
-                    <td className="px-6 py-3 text-right text-slate-800">
+                  <TableRow key={row.dealerCode} className="border-b-0 border-t border-slate-100 hover:bg-slate-50">
+                    <TableCell className="px-6 py-3 font-semibold text-slate-900">{row.dealerCode}</TableCell>
+                    <TableCell className="px-6 py-3 text-slate-700">{row.dealerName}</TableCell>
+                    <TableCell className="px-6 py-3 text-right text-slate-800">
                       {row.vins.toLocaleString('en-US')}
-                    </td>
-                    <td className="px-6 py-3 text-right font-semibold text-slate-900">
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
                       {formatNumber(row.arAmount, 2)}
-                    </td>
-                    <td className="px-6 py-3 text-right font-semibold text-slate-900">
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
                       {formatNumber(row.ramCharge, 2)}
-                    </td>
-                    <td className="px-6 py-3 text-right font-semibold text-slate-900">
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right font-semibold text-slate-900">
                       {formatNumber(row.dealerCharge, 2)}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
+              </TableBody>
             </table>
           </TabsContent>
 
           <TabsContent value="dealerSummary">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-slate-50">
-                <tr>
+            <table className="w-full caption-bottom text-sm">
+              <TableHeader className="sticky top-0 border-b-0 bg-slate-50">
+                <TableRow className="border-b-0 hover:bg-transparent">
                   {dealerSummaryColumns.map((col) => (
-                    <th
-                      key={col}
-                      className="whitespace-nowrap px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-slate-500"
-                    >
+                    <TableHead key={col} className="whitespace-nowrap text-slate-500">
                       {col}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {result.dealerSummary?.map((row, index) => (
-                  <tr key={index} className="border-t border-slate-100 hover:bg-slate-50">
+                  <TableRow key={index} className="border-b-0 border-t border-slate-100 hover:bg-slate-50">
                     {dealerSummaryColumns.map((col) => (
-                      <td key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                      <TableCell key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
                         {cellValue(row[col])}
-                      </td>
+                      </TableCell>
                     ))}
-                  </tr>
+                  </TableRow>
                 ))}
-              </tbody>
+              </TableBody>
             </table>
           </TabsContent>
           </div>

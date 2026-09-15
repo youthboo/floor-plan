@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
 import { DatePicker } from '../ui/DatePicker';
 import { Input } from '../ui/Input';
-import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
+import AppTabsHeader from '../Shared/AppTabsHeader';
+import BackLink from '../Shared/BackLink';
 import ErrorAlert from '../Shared/ErrorAlert';
 import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { formatNumber } from '../../utils/formatters';
 import { fromISODate, toISODate } from '../../data/mockCampaigns';
 import type { CampaignConditionRow, CampaignDetail, CampaignImportResult, RateTierRow } from '../../types';
 
@@ -60,31 +62,12 @@ export const ReviewCampaignsPage: React.FC = () => {
 
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <header className="sticky top-0 z-50 border-b border-primary-100 bg-[#E0ECFB]">
-        <div className="flex items-center justify-center px-4 py-4">
-          <Tabs value="campaign" onValueChange={handleTabChange}>
-            <TabsList className="rounded-full bg-white/50 p-1" aria-label="Main">
-              <TabsTrigger variant="nav" value="campaign">
-                Campaign Management
-              </TabsTrigger>
-              <TabsTrigger variant="nav" value="upload">
-                Upload & Calculate
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-      </header>
+      <AppTabsHeader activeTab="campaign" onTabChange={handleTabChange} />
 
       <main className="flex-1">
         <div className="w-full bg-white py-10">
           <div className="mx-auto max-w-7xl px-6 sm:px-10">
-            <button
-              onClick={handleCancel}
-              className="mb-4 inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-slate-500 transition-colors hover:text-slate-900"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              All campaigns
-            </button>
+            <BackLink onClick={handleCancel} />
 
             {!state?.importResult ? (
               <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
@@ -223,7 +206,7 @@ const CampaignReviewCard: React.FC<{
             {campaign.campaignConditions.length === 1 ? '' : 's'} ·{' '}
             {campaign.rateByDayRange.length} rate tier
             {campaign.rateByDayRange.length === 1 ? '' : 's'} ·{' '}
-            {campaign.units.toLocaleString()} units
+            {formatNumber(campaign.units, 0)} units
           </p>
         </div>
         <button

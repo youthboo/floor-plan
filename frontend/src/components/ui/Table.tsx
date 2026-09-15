@@ -1,18 +1,23 @@
 import * as React from "react"
 import { cn } from "../../lib/utils"
 
-const Table = React.forwardRef<
-  HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="w-full overflow-auto border border-gray-200 rounded-lg bg-white">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
+  /** Overrides the wrapper div's classes (e.g. to drop the border/bg when the
+   * table already sits inside a styled Card, or to cap height for a sticky header). */
+  containerClassName?: string
+}
+
+const Table = React.forwardRef<HTMLTableElement, TableProps>(
+  ({ className, containerClassName, ...props }, ref) => (
+    <div className={cn("w-full overflow-auto border border-gray-200 rounded-lg bg-white", containerClassName)}>
+      <table
+        ref={ref}
+        className={cn("w-full caption-bottom text-sm", className)}
+        {...props}
+      />
+    </div>
+  )
+)
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<
@@ -61,19 +66,26 @@ const TableRow = React.forwardRef<
 ))
 TableRow.displayName = "TableRow"
 
-const TableHead = React.forwardRef<
-  HTMLTableCellElement,
-  React.ThHTMLAttributes<HTMLTableCellElement>
->(({ className, ...props }, ref) => (
-  <th
-    ref={ref}
-    className={cn(
-      "h-12 px-6 py-3 text-left align-middle font-700 text-gray-700 uppercase text-xs tracking-wider [&:has([role=checkbox])]:pr-0",
-      className
-    )}
-    {...props}
-  />
-))
+interface TableHeadProps extends React.ThHTMLAttributes<HTMLTableCellElement> {
+  /** "default" = uppercase small-caps label. "plain" = normal-case text-sm label,
+   * matching read-only detail-page tables. */
+  variant?: "default" | "plain"
+}
+
+const TableHead = React.forwardRef<HTMLTableCellElement, TableHeadProps>(
+  ({ className, variant = "default", ...props }, ref) => (
+    <th
+      ref={ref}
+      className={cn(
+        variant === "default"
+          ? "h-12 px-6 py-3 text-left align-middle font-bold text-gray-700 uppercase text-xs tracking-wider [&:has([role=checkbox])]:pr-0"
+          : "px-4 py-3 text-left align-middle font-medium text-slate-700 [&:has([role=checkbox])]:pr-0",
+        className
+      )}
+      {...props}
+    />
+  )
+)
 TableHead.displayName = "TableHead"
 
 const TableCell = React.forwardRef<
