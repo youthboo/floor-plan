@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Lock } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Input } from '../ui/Input';
@@ -17,6 +18,7 @@ import ARDrawdownPreview from '../Shared/ARDrawdownPreview';
 import CalculationResultView from '../Shared/CalculationResultView';
 import LoadingSpinner from '../Shared/LoadingSpinner';
 import ErrorAlert from '../Shared/ErrorAlert';
+import { toast } from 'sonner';
 import {
   parseWorkbookFile,
   parseSingleSheetFile,
@@ -95,7 +97,6 @@ export const UploadCalculatePage: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isWaiveRecalculating, setIsWaiveRecalculating] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [calcResult, setCalcResult] = useState<CalculationResponse | null>(null);
 
   const { calculate, loading: isCalculating, error: calcError, reset: resetCalculation } =
@@ -128,7 +129,6 @@ export const UploadCalculatePage: React.FC = () => {
     setIsUploadModalOpen(false);
     setIsParsing(true);
     setPageError(null);
-    setSuccessMessage(null);
     setCalcResult(null);
     resetCalculation();
 
@@ -165,7 +165,6 @@ export const UploadCalculatePage: React.FC = () => {
     setWorkbook(null);
     setUploadedFilePath(null);
     setPageError(null);
-    setSuccessMessage(null);
     setCalcResult(null);
     setIsEditingConfig(false);
     setIsWaiveModalOpen(false);
@@ -183,6 +182,19 @@ export const UploadCalculatePage: React.FC = () => {
     }
   };
 
+  const handleRemoveAR = () => {
+    setArFile(null);
+    setWorkbook(null);
+    setUploadedFilePath(null);
+    setPageError(null);
+  };
+
+  const handleRemoveSOT = () => {
+    setSotFileName(null);
+    setSotFilePath(null);
+    setSotPreview(null);
+  };
+
   const handleToggleConfigEdit = () => {
     if (calcResult) return;
     if (isEditingConfig) {
@@ -196,7 +208,6 @@ export const UploadCalculatePage: React.FC = () => {
     if (!arFile || !systemConfig) return;
 
     setPageError(null);
-    setSuccessMessage(null);
     setIsUploading(true);
 
     try {
@@ -230,7 +241,6 @@ export const UploadCalculatePage: React.FC = () => {
     if (!arFile || !systemConfig) return;
 
     setPageError(null);
-    setSuccessMessage(null);
     setIsWaiveModalOpen(false);
     setIsWaiveRecalculating(true);
 
@@ -255,7 +265,7 @@ export const UploadCalculatePage: React.FC = () => {
 
       if (data) {
         setCalcResult(data);
-        setSuccessMessage('Recalculated with waive conditions applied');
+        toast.success('Recalculated with waive conditions applied');
       }
     } catch (err) {
       setPageError(getApiErrorMessage(err, 'Upload failed'));
@@ -327,7 +337,6 @@ export const UploadCalculatePage: React.FC = () => {
           setPageError(null);
           setIsWaiveModalOpen(true);
         }}
-        successMessage={successMessage}
       />
     );
   } else if (workbook && arFile) {
@@ -337,10 +346,12 @@ export const UploadCalculatePage: React.FC = () => {
         workbook={workbook}
         onReset={handleReset}
         onCalculate={handleCalculate}
+        onRemoveAR={handleRemoveAR}
         onUploadSOT={() => {
           setPageError(null);
           setIsSOTModalOpen(true);
         }}
+        onRemoveSOT={handleRemoveSOT}
         sotFileName={sotFileName}
         sotUploading={isSOTUploading}
         sotPreview={sotPreview}
@@ -370,7 +381,7 @@ export const UploadCalculatePage: React.FC = () => {
 
   return (
     <div className="w-full bg-white py-10">
-      <div className="mx-auto max-w-7xl px-6 sm:px-10">
+      <div className="mx-auto max-w-[90rem] px-6 sm:px-10">
         <div className="mb-8">
           <h1 className="mb-2 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
             Upload & Calculate
@@ -388,15 +399,22 @@ export const UploadCalculatePage: React.FC = () => {
                 <span className="text-slate-300">·</span>
                 <span className="text-slate-400">from config sheet</span>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleToggleConfigEdit}
-                disabled={!!calcResult || configLoading || !systemConfig}
-              >
-                {isEditingConfig ? 'Done' : 'Edit'}
-              </Button>
+              {calcResult ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-500">
+                  <Lock className="h-3.5 w-3.5" />
+                  Locked
+                </span>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleToggleConfigEdit}
+                  disabled={configLoading || !systemConfig}
+                >
+                  {isEditingConfig ? 'Done' : 'Edit'}
+                </Button>
+              )}
             </CardHeader>
 
             <CardContent className="px-6 pb-6">

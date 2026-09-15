@@ -2,10 +2,10 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, useLocation, useSearchParams } from 'react-router-dom';
 import CampaignManagementPage from './components/Pages/CampaignManagementPage';
 import UploadCalculatePage from './components/Pages/UploadCalculatePage';
-import NewCampaignPage from './components/Pages/NewCampaignPage';
 import CampaignDetailPage from './components/Pages/CampaignDetailPage';
 import ReviewCampaignsPage from './components/Pages/ReviewCampaignsPage';
 import { Tabs, TabsContent } from './components/ui/Tabs';
+import { Toaster } from 'sonner';
 import AppTabsHeader from './components/Shared/AppTabsHeader';
 
 const AppContent: React.FC = () => {
@@ -14,15 +14,13 @@ const AppContent: React.FC = () => {
   const activeTab = searchParams.get('tab') === 'campaign' ? 'campaign' : 'upload';
   const isFullPageRoute =
     ['/new-campaign', '/review-campaigns'].includes(location.pathname) ||
-    location.pathname.startsWith('/campaign-detail/') ||
-    location.pathname.startsWith('/edit-campaign/');
+    location.pathname.startsWith('/campaign-detail/');
 
   if (isFullPageRoute) {
     return (
       <Routes>
-        <Route path="/new-campaign" element={<NewCampaignPage />} />
+        <Route path="/new-campaign" element={<CampaignDetailPage />} />
         <Route path="/campaign-detail/:campaignId" element={<CampaignDetailPage />} />
-        <Route path="/edit-campaign/:campaignId" element={<NewCampaignPage />} />
         <Route path="/review-campaigns" element={<ReviewCampaignsPage />} />
       </Routes>
     );
@@ -53,6 +51,7 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <div className="flex min-h-screen flex-col bg-white">
         <AppContent />
+        <Toaster position="top-right" richColors closeButton />
       </div>
     </BrowserRouter>
   );

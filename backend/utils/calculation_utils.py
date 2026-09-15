@@ -563,6 +563,11 @@ def _load_ar_dataframe(
         )
         df_ar_current['waive amount'] = df_ar_current['waive amount'].fillna(0)
         df_ar_current['reason'] = df_ar_current['reason'].fillna('')
+    else:
+        # Pre-Waive: these columns still exist (0 / blank) — only the After-Waive
+        # columns are absent this run (added in _calculate_charges when is_waive_run).
+        df_ar_current['waive amount'] = 0
+        df_ar_current['reason'] = ''
 
     return df_ar_current
 
@@ -582,14 +587,24 @@ def _normalize_model(model: Any) -> str:
     return ''.join(tokens)
 
 
+def _parse_dealer_list(value: Any) -> set[str]:
+    """Normalize an Exception field into a set of dealer codes — a list (current UI shape),
+    or (legacy) a comma/newline separated free-text string."""
+    if not value:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {str(v).strip() for v in value if str(v).strip()}
+    return {part.strip() for part in re.split(r'[,\n]+', str(value)) if part.strip()}
+
+
 def _load_active_campaign_index() -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     """Build VIN-matching lookups from Campaign Master: name -> terms map, plus a flat
-    quota-row index to match VINs against. Draft campaigns are excluded."""
+    quota-row index to match VINs against. Only Active campaigns are included."""
     campaigns_by_name: dict[str, dict[str, Any]] = {}
     quota_index: list[dict[str, Any]] = []
 
     for campaign in load_campaigns():
-        if campaign.get('status', 'Active') == 'Draft':
+        if campaign.get('status', 'Active') != 'Active':
             continue
 
         rate_ranges = prepare_rate_ranges([
@@ -621,28 +636,45 @@ def _load_active_campaign_index() -> tuple[dict[str, dict[str, Any]], list[dict[
                 'ddStart': pd.Timestamp(quota_row['ddStart']),
                 'ddEnd': pd.Timestamp(quota_row['ddEnd']),
                 'selectedDealers': set(quota_row.get('selectedDealers') or []),
+                'exceptionDealers': _parse_dealer_list(quota_row.get('exception')),
+                # 0/unset means no cap (e.g. rows added via the manual campaign form,
+                # which has no Units field) — only imported rows carry a real quota.
+                'unitsQuota': int(quota_row.get('units') or 0),
             })
 
     return campaigns_by_name, quota_index
 
 
 def _match_campaign_for_vin(
-    model: Any, dealer_code: Any, alloc_date: pd.Timestamp, quota_index: list[dict[str, Any]]
+    model: Any,
+    dealer_code: Any,
+    alloc_date: pd.Timestamp,
+    quota_index: list[dict[str, Any]],
+    consumed_units: dict[int, int],
 ) -> str | None:
-    """Find the campaign whose quota-row condition (Model + DD range, optional dealer)
-    this VIN satisfies; returns its name, or None."""
+    """Find the campaign whose quota-row condition (Model + DD range, dealer scope,
+    remaining quota) this VIN satisfies; returns its name, or None. Consumes one unit
+    of the matched row's quota (consumed_units is mutated in place, keyed by the row's
+    position in quota_index) so later VINs fall through once a row is exhausted."""
     if pd.isna(alloc_date) or not model or (isinstance(model, float) and pd.isna(model)):
         return None
     model_norm = _normalize_model(model)
     if not model_norm:
         return None
-    for entry in quota_index:
+    dealer_str = str(dealer_code).strip()
+    for idx, entry in enumerate(quota_index):
         if entry['model'] != model_norm:
             continue
         if not (entry['ddStart'] <= alloc_date <= entry['ddEnd']):
             continue
-        if entry['selectedDealers'] and str(dealer_code).strip() not in entry['selectedDealers']:
+        if entry['selectedDealers']:
+            if dealer_str not in entry['selectedDealers']:
+                continue
+        elif dealer_str in entry['exceptionDealers']:
             continue
+        if entry['unitsQuota'] > 0 and consumed_units.get(idx, 0) >= entry['unitsQuota']:
+            continue
+        consumed_units[idx] = consumed_units.get(idx, 0) + 1
         return entry['campaignName']
     return None
 
@@ -652,19 +684,19 @@ def _resolve_campaign_terms(
     campaigns_by_name: dict[str, dict[str, Any]],
     quota_index: list[dict[str, Any]],
     subvention_map: dict[str, Any],
+    consumed_units: dict[int, int],
 ) -> tuple[int, list[dict[str, Any]] | None, dict[str, Any] | None]:
-    """Resolve (free_days, rate override, mismatch) for one AR row vs Campaign Master:
-    - 'Normal' -> legacy free days, no campaign check.
-    - Matches a Master quota row -> use it; mismatch if it differs from the AR tag.
-    - In Master but no quota row matches -> mismatch, falls back to Normal.
-    - Not in Master but in legacy config -> old behavior, not a mismatch.
-    - Found nowhere -> mismatch, falls back to Normal."""
+    """Resolve (free_days, rate override, mismatch) for one AR row vs Campaign Master.
+
+    Every VIN is independently re-matched against active campaign quota rows, regardless
+    of what the AR file itself asserts (including 'Normal'), so under-assignment is also
+    caught. Pricing uses the matched campaign's terms only when it agrees with the AR
+    file's assertion; any mismatch (either direction) prices at Default ('Normal') —
+    the panel is for source-data correction, never an alternate price preview.
+    - Not in Master but in legacy config -> old behavior, not a mismatch."""
     raw_assigned = row.get('Subvention Campaign')
     assigned = str(raw_assigned) if raw_assigned is not None else 'Normal'
-    legacy_free_days = subvention_map.get(assigned)
-
-    if assigned.strip().lower() == 'normal':
-        return int(legacy_free_days) if legacy_free_days is not None else 0, None, None
+    default_free_days = int(subvention_map.get('Normal', 0) or 0)
 
     model = row.get('Model')
     dealer_code = row.get('Dealer Code')
@@ -682,27 +714,33 @@ def _resolve_campaign_terms(
             'reason': reason,
         }
 
-    matched_name = _match_campaign_for_vin(model, dealer_code, alloc_date, quota_index)
+    matched_name = _match_campaign_for_vin(model, dealer_code, alloc_date, quota_index, consumed_units)
 
     if matched_name:
-        campaign = campaigns_by_name[matched_name.strip().lower()]
         if matched_name.strip().lower() == assigned.strip().lower():
+            campaign = campaigns_by_name[matched_name.strip().lower()]
             return campaign['freeDays'], campaign['rateRanges'], None
-        return campaign['freeDays'], campaign['rateRanges'], mismatch(
+        # AR file's assertion disagrees with the system's independent match — price at
+        # Default regardless of direction; report the discrepancy for correction.
+        return default_free_days, None, mismatch(
             matched_name,
             f"Model '{model}' allocated {drawdown_display} matches campaign '{matched_name}', not '{assigned}'",
         )
 
+    if assigned.strip().lower() == 'normal':
+        return default_free_days, None, None
+
     if assigned.strip().lower() in campaigns_by_name:
-        return 0, None, mismatch(
+        return default_free_days, None, mismatch(
             'Normal', f"VIN does not meet '{assigned}' model/allocation-date conditions"
         )
 
+    legacy_free_days = subvention_map.get(assigned)
     if legacy_free_days is not None:
         # Legacy campaign not yet migrated into Campaign Master — old behavior, not a mismatch.
         return int(legacy_free_days), None, None
 
-    return 0, None, mismatch(
+    return default_free_days, None, mismatch(
         'Normal', f"Campaign '{assigned}' not found in Campaign Master or legacy config"
     )
 
@@ -728,8 +766,11 @@ def _calculate_charges(
     subvention_map = df_subvention.set_index('Campaign Name')['Free Days'].to_dict()
 
     campaigns_by_name, quota_index = _load_active_campaign_index()
+    consumed_units: dict[int, int] = {}
     resolved = df_ar_current.apply(
-        lambda row: _resolve_campaign_terms(row, campaigns_by_name, quota_index, subvention_map),
+        lambda row: _resolve_campaign_terms(
+            row, campaigns_by_name, quota_index, subvention_map, consumed_units
+        ),
         axis=1,
     )
     df_ar_current['Free Days'] = resolved.map(lambda r: r[0]).astype(int)
@@ -789,12 +830,14 @@ def _build_stats_and_distributions(
         for _, row in campaign_counts.iterrows()
     ]
 
+    ram_amount_col = 'RAM Charge (After Waive)' if is_waive_run else 'RAM Charge'
+    dealer_amount_col = 'Dealer Charge (After Waive)' if is_waive_run else 'Dealer Charge'
     summary_by_dealer = (
         df_ar_current.groupby(['Dealer Code', 'Dealer Name'], dropna=False)
         .agg(
             vins=('VIN Number', 'count'),
-            ramCharge=('RAM Charge', 'sum'),
-            dealerCharge=('Dealer Charge', 'sum'),
+            ramCharge=(ram_amount_col, 'sum'),
+            dealerCharge=(dealer_amount_col, 'sum'),
             arAmount=('Price (Ex. Vat)', 'sum'),
         )
         .reset_index()
@@ -887,9 +930,9 @@ def _format_ar_detail_for_export(
     df_ar_current['Due Date'] = pd.to_datetime(df_ar_current['Due Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
     df_ar_current['SOT Start Date'] = pd.to_datetime(df_ar_current['SOT Start Date'], errors='coerce').dt.strftime('%d/%m/%Y').replace('NaT', '')
 
-    currency_columns = ['Price (Ex. Vat)', 'RAM Charge', 'RAM Charge (bf)', 'Dealer Charge']
+    currency_columns = ['Price (Ex. Vat)', 'RAM Charge', 'RAM Charge (bf)', 'Dealer Charge', 'waive amount']
     if is_waive_run:
-        currency_columns += ['waive amount', 'RAM Charge (After Waive)', 'Dealer Charge (After Waive)']
+        currency_columns += ['RAM Charge (After Waive)', 'Dealer Charge (After Waive)']
 
     for col in currency_columns:
         df_ar_current[col] = df_ar_current[col].astype(float).map('{:,.2f}'.format)

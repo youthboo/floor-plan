@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
@@ -9,7 +10,9 @@ interface ARDrawdownPreviewProps {
   workbook: WorkbookPreview;
   onReset: () => void;
   onCalculate?: () => void;
+  onRemoveAR?: () => void;
   onUploadSOT?: () => void;
+  onRemoveSOT?: () => void;
   sotFileName?: string | null;
   sotUploading?: boolean;
   sotPreview?: SheetPreview | null;
@@ -54,7 +57,9 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
   workbook,
   onReset,
   onCalculate,
+  onRemoveAR,
   onUploadSOT,
+  onRemoveSOT,
   sotFileName,
   sotUploading,
   sotPreview,
@@ -88,9 +93,20 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
 
         <div className="flex flex-col gap-2 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold text-slate-900">AR drawdown preview</h2>
-          <p className="truncate text-xs text-slate-400 sm:max-w-md sm:text-right">
-            {workbook.fileName}
-          </p>
+          <div className="flex items-center gap-2 sm:max-w-md">
+            <p className="truncate text-xs text-slate-400">{workbook.fileName}</p>
+            {onRemoveAR && (
+              <button
+                type="button"
+                onClick={onRemoveAR}
+                aria-label="Remove AR file"
+                title="Remove AR file"
+                className="flex-shrink-0 rounded p-0.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         <Tabs value={activeSheet} onValueChange={setActiveSheet}>
@@ -146,9 +162,20 @@ export const ARDrawdownPreview: React.FC<ARDrawdownPreviewProps> = ({
                 {sotPreview.rows.length} rows
               </span>
             </div>
-            <p className="truncate text-xs text-slate-400 sm:max-w-md sm:text-right">
-              {sotFileName}
-            </p>
+            <div className="flex items-center gap-2 sm:max-w-md">
+              <p className="truncate text-xs text-slate-400">{sotFileName}</p>
+              {onRemoveSOT && (
+                <button
+                  type="button"
+                  onClick={onRemoveSOT}
+                  aria-label="Remove SOT file"
+                  title="Remove SOT file"
+                  className="flex-shrink-0 rounded p-0.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
 
           {sotPreview.headers.length === 0 ? (

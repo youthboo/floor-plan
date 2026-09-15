@@ -10,12 +10,14 @@ import { Input } from '../ui/Input';
 import { Tabs, TabsList, TabsTrigger } from '../ui/Tabs';
 import AddCampaignsModal from '../Shared/AddCampaignsModal';
 import UploadCampaignModal from '../Shared/UploadCampaignModal';
+import ConfirmDialog from '../Shared/ConfirmDialog';
 import LoadingSpinner from '../Shared/LoadingSpinner';
 import ErrorAlert from '../Shared/ErrorAlert';
 import { cn } from '../../lib/utils';
 import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { useAsyncData } from '../../hooks/useAsyncData';
+import { duplicateCampaignName, nextAvailableCampaignCode } from '../../utils/campaignDuplicate';
 
 type StatusFilter = 'all' | 'active' | 'draft';
 
@@ -45,6 +47,7 @@ export const CampaignManagementPage: React.FC = () => {
   const [isImportingFile, setIsImportingFile] = useState(false);
   const [isBulkActionInProgress, setIsBulkActionInProgress] = useState(false);
   const [bulkActionError, setBulkActionError] = useState<string | null>(null);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   // Shares one error slot with the list-load error, matching pre-refactor behavior
   // where both were the same state variable (so a refetch clears either).
   const [importError, setImportError] = useState<string | null>(null);
@@ -149,17 +152,6 @@ export const CampaignManagementPage: React.FC = () => {
     );
   };
 
-  const nextAvailableCode = (base: string, taken: Set<string>): string => {
-    let candidate = `${base}-COPY`;
-    let suffix = 1;
-    while (taken.has(candidate)) {
-      suffix += 1;
-      candidate = `${base}-COPY${suffix}`;
-    }
-    taken.add(candidate);
-    return candidate;
-  };
-
   const handleDuplicate = async () => {
     if (selectedCodes.length === 0) return;
     setBulkActionError(null);
@@ -169,8 +161,8 @@ export const CampaignManagementPage: React.FC = () => {
       const details = await Promise.all(selectedCodes.map((code) => campaignService.get(code)));
       const duplicates = details.map((detail) => ({
         ...detail,
-        code: nextAvailableCode(detail.code, takenCodes),
-        name: `${detail.name} (Copy)`,
+        code: nextAvailableCampaignCode(detail.code, takenCodes),
+        name: duplicateCampaignName(detail.name),
         campaignConditions: detail.campaignConditions.map((row) => ({ ...row })),
         rateByDayRange: detail.rateByDayRange.map((row) => ({ ...row })),
       }));
@@ -184,8 +176,12 @@ export const CampaignManagementPage: React.FC = () => {
     }
   };
 
-  const handleDelete = async () => {
+  const handleDeleteClick = () => {
     if (selectedCodes.length === 0) return;
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
     setBulkActionError(null);
     setIsBulkActionInProgress(true);
     try {
@@ -199,6 +195,7 @@ export const CampaignManagementPage: React.FC = () => {
       await refetchCampaigns();
     } finally {
       setIsBulkActionInProgress(false);
+      setIsDeleteConfirmOpen(false);
     }
   };
 
@@ -210,7 +207,7 @@ export const CampaignManagementPage: React.FC = () => {
 
   return (
     <div className="w-full bg-white py-10">
-      <div className="mx-auto max-w-7xl px-6 sm:px-10">
+      <div className="mx-auto max-w-[90rem] px-6 sm:px-10">
         <div className="mb-8">
           <h1 className="mb-2 text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
             Campaign Management
@@ -254,7 +251,7 @@ export const CampaignManagementPage: React.FC = () => {
                   variant="secondary"
                   size="sm"
                   className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700"
-                  onClick={() => void handleDelete()}
+                  onClick={handleDeleteClick}
                   disabled={selectedCodes.length === 0 || isBulkActionInProgress}
                 >
                   {isBulkActionInProgress ? 'Working...' : 'Delete'}
@@ -445,6 +442,17 @@ export const CampaignManagementPage: React.FC = () => {
           onClose={() => setIsUploadCampaignModalOpen(false)}
           onUpload={handleUploadCampaign}
           isSubmitting={isImportingFile}
+        />
+
+        <ConfirmDialog
+          isOpen={isDeleteConfirmOpen}
+          title="Delete campaign(s)?"
+          message={`This will permanently delete ${selectedCodes.length} campaign${selectedCodes.length === 1 ? '' : 's'}. This cannot be undone.`}
+          confirmLabel="Delete"
+          isDestructive
+          isConfirming={isBulkActionInProgress}
+          onConfirm={() => void handleDeleteConfirm()}
+          onCancel={() => setIsDeleteConfirmOpen(false)}
         />
       </div>
     </div>

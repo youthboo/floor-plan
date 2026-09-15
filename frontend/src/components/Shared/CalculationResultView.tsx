@@ -1,11 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from '../ui/Button';
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../ui/Tabs';
 import { cn } from '../../lib/utils';
 import { formatNumber } from '../../utils/formatters';
 import type { CalculationResponse } from '../../types';
-import SuccessAlert from './SuccessAlert';
 
 interface CalculationResultViewProps {
   result: CalculationResponse;
@@ -13,7 +12,6 @@ interface CalculationResultViewProps {
   onReset: () => void;
   onExport: () => void;
   onUploadWaive?: () => void;
-  successMessage?: string | null;
 }
 
 type ResultTab = 'summary' | 'arDetail' | 'byDealer' | 'dealerSummary';
@@ -24,15 +22,34 @@ function cellValue(value: unknown): string {
   return String(value);
 }
 
+/** The mismatch panel's Assigned To / Should Be columns show "— none —" for Default. */
+function campaignLabel(value: string): string {
+  return value.trim().toLowerCase() === 'normal' ? '— none —' : value;
+}
+
 export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
   result,
   fileName,
   onReset,
   onExport,
   onUploadWaive,
-  successMessage,
 }) => {
+  const isWaiveRun = result.stats?.totalWaive !== undefined;
+
   const [activeTab, setActiveTab] = useState<ResultTab>('summary');
+  const [highlightedVin, setHighlightedVin] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (activeTab !== 'arDetail' || !highlightedVin) return;
+    const el = document.getElementById(`ar-detail-row-${highlightedVin}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [activeTab, highlightedVin]);
+
+  const handleMismatchRowClick = (vinNumber: string) => {
+    setActiveTab('arDetail');
+    setHighlightedVin(vinNumber);
+  };
+
   const { stats, campaignDistribution, mismatches, summary } = result;
   const safeSummary = summary ?? {
     'AR Last Month': 0,
@@ -110,9 +127,12 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
 
   return (
     <div className="space-y-6">
-      {successMessage && <SuccessAlert message={successMessage} />}
-
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4 sm:grid-cols-2',
+          isWaiveRun ? 'xl:grid-cols-5' : 'xl:grid-cols-4'
+        )}
+      >
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
           <p className="text-3xl font-bold tracking-tight text-slate-900">
             {safeStats.rowsProcessed.toLocaleString('en-US')}
@@ -131,6 +151,14 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
           </p>
           <p className="mt-1 text-sm text-slate-500">THB (Dealer Charge column)</p>
         </div>
+        {isWaiveRun && (
+          <div className="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+            <p className="text-3xl font-bold tracking-tight text-slate-900">
+              {formatNumber(safeStats.totalWaive ?? 0, 2)}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">THB waived (Total Waive amount)</p>
+          </div>
+        )}
         <div className="rounded-xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
           <p className="text-3xl font-bold tracking-tight text-slate-900">
             {mismatchCount.toLocaleString('en-US')}
@@ -223,19 +251,21 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
         </div>
       )}
 
-      {mismatchCount > 0 && (
-        <div className="overflow-hidden rounded-xl border border-orange-200 bg-orange-50/60 shadow-sm">
-          <div className="px-6 py-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-semibold text-red-700">Mismatched VIN and campaign</h3>
-              <span className="rounded-full bg-orange-200 px-2.5 py-0.5 text-xs font-semibold text-orange-800">
-                {mismatchCount} found
-              </span>
-            </div>
-            <p className="mt-1 text-sm text-red-600/80">
-              {mismatchCount} VINs assigned to a campaign that does not match the campaign conditions
-            </p>
+      <div className="overflow-hidden rounded-xl border border-orange-200 bg-orange-50/60 shadow-sm">
+        <div className="px-6 py-5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-red-700">Mismatched VIN and campaign</h3>
+            <span className="rounded-full bg-orange-200 px-2.5 py-0.5 text-xs font-semibold text-orange-800">
+              {mismatchCount} found
+            </span>
           </div>
+          <p className="mt-1 text-sm text-red-600/80">
+            {mismatchCount} VINs assigned to a campaign that does not match the campaign conditions
+          </p>
+        </div>
+        {mismatchCount === 0 ? (
+          <p className="px-6 pb-6 text-sm text-slate-500">No mismatches found.</p>
+        ) : (
           <Table containerClassName="max-h-[28rem] border-0 rounded-none bg-white/70">
             <TableHeader className="sticky top-0 border-b-0 bg-orange-50/80">
               <TableRow className="border-b-0 hover:bg-transparent">
@@ -250,7 +280,12 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
             </TableHeader>
             <TableBody>
               {safeMismatches.map((row) => (
-                <TableRow key={row.vinNumber} className="border-b-0 border-t border-orange-100 hover:bg-transparent">
+                <TableRow
+                  key={row.vinNumber}
+                  onClick={() => handleMismatchRowClick(row.vinNumber)}
+                  className="cursor-pointer border-b-0 border-t border-orange-100 hover:bg-orange-100/50"
+                  title="View this VIN in AR Detail"
+                >
                   <TableCell className="whitespace-nowrap px-4 py-3 font-semibold text-slate-900">
                     {row.vinNumber}
                   </TableCell>
@@ -259,12 +294,12 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
                   <TableCell className="whitespace-nowrap px-4 py-3 text-slate-700">{row.drawdown}</TableCell>
                   <TableCell className="px-4 py-3">
                     <span className="inline-flex rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-800">
-                      {row.assignedTo}
+                      {campaignLabel(row.assignedTo)}
                     </span>
                   </TableCell>
                   <TableCell className="px-4 py-3">
                     <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
-                      {row.shouldBe}
+                      {campaignLabel(row.shouldBe)}
                     </span>
                   </TableCell>
                   <TableCell className="px-4 py-3 text-slate-600">{row.reason}</TableCell>
@@ -272,13 +307,15 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
               ))}
             </TableBody>
           </Table>
-        </div>
-      )}
+        )}
+      </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         <div className="flex flex-col gap-3 border-b border-slate-100 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h3 className="text-base font-semibold text-slate-900">Calculation result</h3>
+            <h3 className="text-base font-semibold text-slate-900">
+              {isWaiveRun ? 'Calculation Result (After Waive)' : 'Calculation result'}
+            </h3>
             <p className="mt-1 truncate text-xs text-slate-400">from {fileName}</p>
           </div>
           <Button type="button" variant="outline" size="sm" onClick={onExport}>
@@ -335,15 +372,25 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {result.detailRecords?.map((row, index) => (
-                  <TableRow key={index} className="border-b-0 border-t border-slate-100 hover:bg-slate-50">
-                    {detailColumns.map((col) => (
-                      <TableCell key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
-                        {cellValue(row[col])}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))}
+                {result.detailRecords?.map((row, index) => {
+                  const vin = String(row['VIN Number'] ?? '');
+                  return (
+                    <TableRow
+                      key={index}
+                      id={vin ? `ar-detail-row-${vin}` : undefined}
+                      className={cn(
+                        'border-b-0 border-t border-slate-100 hover:bg-slate-50',
+                        vin && vin === highlightedVin && 'bg-amber-50 hover:bg-amber-50'
+                      )}
+                    >
+                      {detailColumns.map((col) => (
+                        <TableCell key={col} className="whitespace-nowrap px-4 py-3 text-slate-700">
+                          {cellValue(row[col])}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </table>
           </TabsContent>
@@ -420,7 +467,7 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
             Reset
           </Button>
           <Button type="button" variant="outline" onClick={onUploadWaive}>
-            Upload Waive Conditions
+            {isWaiveRun ? 'Replace Waive Conditions' : 'Upload Waive Conditions'}
           </Button>
         </div>
       </div>

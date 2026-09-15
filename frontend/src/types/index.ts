@@ -103,6 +103,8 @@ export interface CalculationStats {
   totalRamCharge: number;
   totalDealerCharge: number;
   mismatchCount: number;
+  /** Only present on a post-waive (calculate-with-waive) result. */
+  totalWaive?: number;
 }
 
 export interface CampaignDistributionItem {
@@ -184,7 +186,8 @@ export interface CampaignConditionRow {
   units?: number;
   affectedDealers: string;
   selectedDealers?: string[];
-  exception?: string | null;
+  /** Dealers excluded from an "All dealers" scope — picked via the same dealer-picker modal. */
+  exception?: string[] | null;
 }
 
 export interface RateTierRow {

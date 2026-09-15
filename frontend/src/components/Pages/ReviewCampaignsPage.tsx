@@ -13,6 +13,7 @@ import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { formatNumber } from '../../utils/formatters';
 import { fromISODate, toISODate } from '../../data/mockCampaigns';
+import { cn, editableFieldClass } from '../../lib/utils';
 import type { CampaignConditionRow, CampaignDetail, CampaignImportResult, RateTierRow } from '../../types';
 
 interface ReviewLocationState {
@@ -66,7 +67,7 @@ export const ReviewCampaignsPage: React.FC = () => {
 
       <main className="flex-1">
         <div className="w-full bg-white py-10">
-          <div className="mx-auto max-w-7xl px-6 sm:px-10">
+          <div className="mx-auto max-w-[90rem] px-6 sm:px-10">
             <BackLink onClick={handleCancel} />
 
             {!state?.importResult ? (
@@ -97,7 +98,7 @@ export const ReviewCampaignsPage: React.FC = () => {
                       {state.importResult.totalQuotaRows === 1 ? '' : 's'}
                     </p>
                     <p className="mt-1 text-xs text-slate-400">
-                      Fields below are editable — fix anything before importing.
+                      Press Edit on a card to fix its fields before importing.
                     </p>
                   </div>
                   <div className="flex flex-shrink-0 gap-3">
@@ -152,6 +153,29 @@ const CampaignReviewCard: React.FC<{
   onRemove: () => void;
   onUpdate: (updated: CampaignDetail) => void;
 }> = ({ campaign, onRemove, onUpdate }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [snapshot, setSnapshot] = useState<CampaignDetail | null>(null);
+
+  const handleEdit = () => {
+    setSnapshot(campaign);
+    setIsEditing(true);
+  };
+
+  const handleCancelEdit = () => {
+    if (snapshot) onUpdate(snapshot);
+    setIsEditing(false);
+    setSnapshot(null);
+  };
+
+  const handleSaveEdit = () => {
+    setIsEditing(false);
+    setSnapshot(null);
+  };
+
+  const updateHeaderField = <K extends keyof CampaignDetail>(field: K, value: CampaignDetail[K]) => {
+    onUpdate({ ...campaign, [field]: value });
+  };
+
   const updateConditionField = <K extends keyof CampaignConditionRow>(
     rowId: number,
     field: K,
@@ -195,13 +219,38 @@ const CampaignReviewCard: React.FC<{
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between space-y-0 px-6 py-5">
-        <div>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-            <h2 className="text-lg font-semibold text-slate-900">{campaign.name}</h2>
-            <span className="text-sm text-slate-500">Code {campaign.code}</span>
-            <span className="text-sm text-slate-500">{campaign.freeDays} free days</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <Input
+              value={campaign.name}
+              onChange={(e) => updateHeaderField('name', e.target.value)}
+              disabled={!isEditing}
+              aria-label="Campaign name"
+              className={cn('h-9 w-56 text-base font-semibold', editableFieldClass(isEditing))}
+            />
+            <div className="flex items-center gap-1.5 text-sm text-slate-500">
+              <span>Code</span>
+              <Input
+                value={campaign.code}
+                onChange={(e) => updateHeaderField('code', e.target.value)}
+                disabled={!isEditing}
+                aria-label="Campaign code"
+                className={cn('h-8 w-28 text-sm', editableFieldClass(isEditing))}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 text-sm text-slate-500">
+              <Input
+                type="number"
+                value={campaign.freeDays}
+                onChange={(e) => updateHeaderField('freeDays', Number(e.target.value) || 0)}
+                disabled={!isEditing}
+                aria-label="Free days"
+                className={cn('h-8 w-20 text-sm', editableFieldClass(isEditing))}
+              />
+              <span>free days</span>
+            </div>
           </div>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-2 text-sm text-slate-500">
             {campaign.campaignConditions.length} quota row
             {campaign.campaignConditions.length === 1 ? '' : 's'} ·{' '}
             {campaign.rateByDayRange.length} rate tier
@@ -209,15 +258,31 @@ const CampaignReviewCard: React.FC<{
             {formatNumber(campaign.units, 0)} units
           </p>
         </div>
-        <button
-          type="button"
-          onClick={onRemove}
-          aria-label={`Remove ${campaign.name} from import`}
-          title="Remove from import"
-          className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
-        >
-          <X className="h-5 w-5" />
-        </button>
+        <div className="flex flex-shrink-0 items-center gap-2">
+          {isEditing ? (
+            <>
+              <Button variant="secondary" size="sm" onClick={handleCancelEdit}>
+                Cancel
+              </Button>
+              <Button variant="default" size="sm" onClick={handleSaveEdit}>
+                Save
+              </Button>
+            </>
+          ) : (
+            <Button variant="secondary" size="sm" onClick={handleEdit}>
+              Edit
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`Remove ${campaign.name} from import`}
+            title="Remove from import"
+            className="flex-shrink-0 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-6 px-6 pb-6">
@@ -233,7 +298,7 @@ const CampaignReviewCard: React.FC<{
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-slate-500">DD Start</th>
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-slate-500">DD End</th>
                   <th className="px-4 py-2.5 text-right text-xs font-bold uppercase tracking-wider text-slate-500">Units</th>
-                  <th className="px-4 py-2.5" />
+                  {isEditing && <th className="px-4 py-2.5" />}
                 </tr>
               </thead>
               <tbody>
@@ -244,14 +309,16 @@ const CampaignReviewCard: React.FC<{
                       <Input
                         value={row.range}
                         onChange={(e) => updateConditionField(row.id, 'range', e.target.value)}
-                        className={inputCellClass}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
                       <Input
                         value={row.model}
                         onChange={(e) => updateConditionField(row.id, 'model', e.target.value)}
-                        className={inputCellClass}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -260,7 +327,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(value) =>
                           updateConditionField(row.id, 'ddStart', value ? fromISODate(value) : '')
                         }
-                        className="h-8 w-36 text-sm"
+                        disabled={!isEditing}
+                        className={cn('h-8 w-36 text-sm', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -269,7 +337,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(value) =>
                           updateConditionField(row.id, 'ddEnd', value ? fromISODate(value) : '')
                         }
-                        className="h-8 w-36 text-sm"
+                        disabled={!isEditing}
+                        className={cn('h-8 w-36 text-sm', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -279,24 +348,27 @@ const CampaignReviewCard: React.FC<{
                         onChange={(e) =>
                           updateConditionField(row.id, 'units', Number(e.target.value) || 0)
                         }
-                        className={`${inputCellClass} text-right`}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, 'text-right', editableFieldClass(isEditing))}
                       />
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeConditionRow(row.id)}
-                        aria-label="Remove quota row"
-                        className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-red-200 text-red-500 transition-colors hover:bg-red-50"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
+                    {isEditing && (
+                      <td className="px-2 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeConditionRow(row.id)}
+                          aria-label="Remove quota row"
+                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-red-200 text-red-500 transition-colors hover:bg-red-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {campaign.campaignConditions.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
+                    <td colSpan={isEditing ? 7 : 6} className="px-4 py-6 text-center text-slate-400">
                       No quota rows left
                     </td>
                   </tr>
@@ -319,7 +391,7 @@ const CampaignReviewCard: React.FC<{
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Eff Start</th>
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Eff End</th>
                   <th className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-slate-500">Delivery Date</th>
-                  <th className="px-4 py-2.5" />
+                  {isEditing && <th className="px-4 py-2.5" />}
                 </tr>
               </thead>
               <tbody>
@@ -329,7 +401,8 @@ const CampaignReviewCard: React.FC<{
                       <Input
                         value={tier.range}
                         onChange={(e) => updateTierField(tier.id, 'range', e.target.value)}
-                        className={inputCellClass}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -339,7 +412,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(e) =>
                           updateTierField(tier.id, 'startDay', Number(e.target.value) || 0)
                         }
-                        className={`${inputCellClass} text-right`}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, 'text-right', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -349,7 +423,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(e) =>
                           updateTierField(tier.id, 'endDay', Number(e.target.value) || 0)
                         }
-                        className={`${inputCellClass} text-right`}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, 'text-right', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -360,7 +435,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(e) =>
                           updateTierField(tier.id, 'rate', Number(e.target.value) || 0)
                         }
-                        className={`${inputCellClass} text-right`}
+                        disabled={!isEditing}
+                        className={cn(inputCellClass, 'text-right', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -369,7 +445,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(value) =>
                           updateTierField(tier.id, 'effectiveStart', value ? fromISODate(value) : '')
                         }
-                        className="h-8 w-36 text-sm"
+                        disabled={!isEditing}
+                        className={cn('h-8 w-36 text-sm', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -378,7 +455,8 @@ const CampaignReviewCard: React.FC<{
                         onChange={(value) =>
                           updateTierField(tier.id, 'effectiveEnd', value ? fromISODate(value) : '')
                         }
-                        className="h-8 w-36 text-sm"
+                        disabled={!isEditing}
+                        className={cn('h-8 w-36 text-sm', editableFieldClass(isEditing))}
                       />
                     </td>
                     <td className="px-4 py-2">
@@ -387,23 +465,26 @@ const CampaignReviewCard: React.FC<{
                         onCheckedChange={(checked) =>
                           updateTierField(tier.id, 'deliveryDate', checked === true)
                         }
+                        disabled={!isEditing}
                       />
                     </td>
-                    <td className="px-2 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => removeTierRow(tier.id)}
-                        aria-label="Remove rate tier"
-                        className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-red-200 text-red-500 transition-colors hover:bg-red-50"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
+                    {isEditing && (
+                      <td className="px-2 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => removeTierRow(tier.id)}
+                          aria-label="Remove rate tier"
+                          className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded border border-red-200 text-red-500 transition-colors hover:bg-red-50"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {campaign.rateByDayRange.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-4 py-6 text-center text-slate-400">
+                    <td colSpan={isEditing ? 8 : 7} className="px-4 py-6 text-center text-slate-400">
                       No rate tiers left
                     </td>
                   </tr>
