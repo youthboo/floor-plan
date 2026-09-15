@@ -1,6 +1,11 @@
 flask==2.3.2
 flask-cors==4.0.0
 pandas==2.0.2
+# pandas 2.0.2's compiled extensions are not ABI-compatible with numpy>=2.0 (raises
+# "numpy.dtype size changed" at import) — pin explicitly since pandas' own metadata
+# only declares numpy>=1.20.3, which pip/a fresh install would otherwise happily
+# satisfy with a numpy 2.x that breaks it.
+numpy==1.26.4
 openpyxl==3.1.2
 werkzeug==2.3.6
 python-dateutil==2.8.2

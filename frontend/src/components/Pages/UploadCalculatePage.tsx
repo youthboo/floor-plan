@@ -305,6 +305,7 @@ export const UploadCalculatePage: React.FC = () => {
     const name = calcResult.outputPath.split(/[/\\]/).pop() || 'AR_Summary.xlsx';
     try {
       await fileService.downloadFile(calcResult.outputPath, name);
+      toast.success('Result exported successfully');
     } catch (err) {
       setPageError(getApiErrorMessage(err, 'Upload failed'));
     }

@@ -5,11 +5,15 @@ Master in utils/campaign_utils.py."""
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
+import threading
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
@@ -30,10 +34,23 @@ from utils.campaign_utils import (
     _campaign_from_frontend_shape,
 )
 from utils.errors import CalculationValidationError
-from utils.paths import AR_INPUT_FOLDER, CAMPAIGN_INPUT_FOLDER, SOT_INPUT_FOLDER, UPLOAD_FOLDER
+from utils.paths import (
+    AR_INPUT_FOLDER,
+    BASE_DIR,
+    BUNDLE_DIR,
+    CAMPAIGN_INPUT_FOLDER,
+    FRONTEND_DIST_DIR,
+    OUTPUT_FOLDER,
+    OUTPUT_WAIVE_FOLDER,
+    SOT_INPUT_FOLDER,
+    UPLOAD_FOLDER,
+)
 
 # ============= CONFIG =============
-app = Flask(__name__)
+# static_folder=None: the catch-all serve_frontend route below handles serving the
+# built frontend itself (Flask's own auto-registered static route would otherwise
+# collide with it, since both would claim the same "/<path:...>" URL pattern).
+app = Flask(__name__, static_folder=None)
 # Ensures unexpected errors still return JSON, never Werkzeug's debug HTML page.
 app.config['PROPAGATE_EXCEPTIONS'] = False
 CORS(app)
@@ -362,5 +379,132 @@ def download():
     return send_file(file_path, as_attachment=True)
 
 
+@app.route('/api/debug/paths', methods=['GET'])
+def debug_paths():
+    """Where this instance is actually reading/writing from — check this first
+    when a packaged build's files don't show up where expected (e.g. macOS
+    Gatekeeper's App Translocation silently runs the app from a hidden
+    read-only copy instead of its real location if it wasn't moved via Finder
+    before the first launch)."""
+    exe_path = str(Path(sys.executable).resolve())
+    return jsonify({
+        'isFrozen': bool(getattr(sys, 'frozen', False)),
+        'executablePath': exe_path,
+        'isTranslocated': 'AppTranslocation' in exe_path,
+        'baseDir': str(BASE_DIR),
+        'bundleDir': str(BUNDLE_DIR),
+        'outputFolder': str(OUTPUT_FOLDER),
+        'outputWaiveFolder': str(OUTPUT_WAIVE_FOLDER),
+        'outputFolderExists': OUTPUT_FOLDER.exists(),
+    })
+
+
+# ============= DESKTOP APP (packaged build) =============
+# Serves the built frontend (frontend/dist) for the desktop-app build; irrelevant to
+# normal web dev, where the separate Vite dev server (port 5173) is used instead.
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_frontend(path: str):
+    if path.startswith('api/'):
+        return jsonify({'error': 'Not found'}), 404
+    dist_dir = str(FRONTEND_DIST_DIR)
+    if path and os.path.exists(os.path.join(dist_dir, path)):
+        return send_from_directory(dist_dir, path)
+    return send_from_directory(dist_dir, 'index.html')
+
+
+def _running_as_desktop_app() -> bool:
+    """True for a packaged (PyInstaller) build, or when explicitly requested for
+    local testing of the desktop-app flow before packaging."""
+    return bool(getattr(sys, 'frozen', False)) or os.environ.get('FLOORPLAN_DESKTOP') == '1'
+
+
+class DesktopAPI:
+    """Exposed to the frontend as window.pywebview.api inside the desktop app.
+    The pywebview window has no browser chrome, so the normal blob + <a download>
+    trick (services/api.ts's downloadFile) silently does nothing there — this
+    reveals the already-written export file in Finder/Explorer instead."""
+
+    def reveal_file(self, file_path: str) -> dict:
+        if not file_path or not os.path.exists(file_path):
+            return {'success': False, 'error': 'File not found'}
+        try:
+            if sys.platform == 'darwin':
+                subprocess.run(['open', '-R', file_path], check=True)
+            elif sys.platform == 'win32':
+                subprocess.run(['explorer', '/select,', file_path])
+            else:
+                subprocess.run(['xdg-open', os.path.dirname(file_path)], check=True)
+            return {'success': True}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
+
+def _warn_if_translocated() -> None:
+    """macOS silently runs a quarantined .app from a hidden read-only copy if it
+    hasn't been moved (via Finder) since being unzipped — data folders then get
+    created there instead of next to the real .app. Surface this immediately
+    rather than leaving the user hunting for "missing" output files."""
+    if sys.platform != 'darwin':
+        return
+    if 'AppTranslocation' not in str(Path(sys.executable).resolve()):
+        return
+    try:
+        subprocess.run([
+            'osascript', '-e',
+            'display alert "App not running from its real location" message '
+            '"macOS opened this app from a temporary, read-only copy because it '
+            'was launched here without first being moved (drag it, in Finder) out '
+            'of the folder it was unzipped into.\\n\\nAR_Outputs and other data '
+            'folders will NOT appear next to the app until you quit, drag it into '
+            'its final folder, then reopen it from there." as warning'
+        ])
+    except Exception:
+        pass  # Best-effort — never block startup over this.
+
+
+def _find_free_port(preferred: int) -> int:
+    """Prefer `preferred` (5001), but never fail to start over it being taken by
+    something else (another instance, a dev server, anything) — pick any free
+    port instead. The frontend's API calls are relative (services/api.ts), so
+    they always reach whichever port this same Flask process actually bound,
+    with no risk of silently talking to a stray unrelated server on 5001."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('127.0.0.1', preferred))
+            return preferred
+        except OSError:
+            pass
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('127.0.0.1', 0))
+        return s.getsockname()[1]
+
+
+def _run_desktop_app() -> None:
+    import webview
+
+    _warn_if_translocated()
+    preferred_port = int(os.environ.get('FLOORPLAN_PORT', '5001'))
+    port = _find_free_port(preferred_port)
+    threading.Thread(
+        target=lambda: app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False),
+        daemon=True,
+    ).start()
+    webview.create_window(
+        'FloorPlan Interest Calculator',
+        f'http://127.0.0.1:{port}',
+        width=1440,
+        height=900,
+        min_size=(1024, 700),
+        js_api=DesktopAPI(),
+    )
+    webview.start()
+
+
 if __name__ == '__main__':
-    app.run(host='127.0.0.1', port=5001, debug=True)
+    if _running_as_desktop_app():
+        _run_desktop_app()
+    else:
+        app.run(host='127.0.0.1', port=int(os.environ.get('FLOORPLAN_PORT', '5001')), debug=True)

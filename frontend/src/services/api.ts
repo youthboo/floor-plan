@@ -10,7 +10,12 @@ import {
   CampaignImportResult,
 } from '../types';
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:5001/api';
+// Relative — the frontend is always served by the same Flask instance that serves
+// the API (Vite's dev proxy below forwards it to the real Flask dev server; the
+// packaged desktop app is one same-origin process). This also means it keeps
+// working even if Flask picks a different port than 5001 because that one was
+// already taken (see backend's _find_free_port).
+const API_BASE_URL = (import.meta.env.VITE_API_URL as string) || '/api';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -79,6 +84,17 @@ export const fileService = {
   },
 
   downloadFile: async (filePath: string, fileName: string): Promise<void> => {
+    // Inside the packaged desktop app (pywebview, no browser chrome), the blob +
+    // <a download> trick below silently does nothing — reveal the already-written
+    // file in Finder/Explorer instead via the native bridge it exposes.
+    if (window.pywebview?.api?.reveal_file) {
+      const result = await window.pywebview.api.reveal_file(filePath);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to reveal the exported file');
+      }
+      return;
+    }
+
     const response = await apiClient.get('/download', {
       params: { filePath },
       responseType: 'blob',
@@ -94,6 +110,16 @@ export const fileService = {
     window.URL.revokeObjectURL(url);
   },
 };
+
+declare global {
+  interface Window {
+    pywebview?: {
+      api: {
+        reveal_file: (filePath: string) => Promise<{ success: boolean; error?: string }>;
+      };
+    };
+  }
+}
 
 export interface CalculationRunConfig {
   month: string;
