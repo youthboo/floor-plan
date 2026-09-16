@@ -8,7 +8,10 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import traceback
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -463,6 +466,51 @@ def _warn_if_translocated() -> None:
         pass  # Best-effort — never block startup over this.
 
 
+def _desktop_log_path() -> Path:
+    """When the windowed .app crashes, there is no Terminal — log to Desktop."""
+    return Path.home() / 'Desktop' / 'FloorPlan-startup.log'
+
+
+def _desktop_log(message: str) -> None:
+    try:
+        stamp = datetime.now().isoformat(timespec='seconds')
+        path = _desktop_log_path()
+        with path.open('a', encoding='utf-8') as fh:
+            fh.write(f'[{stamp}] {message}\n')
+    except Exception:
+        pass
+
+
+def _desktop_alert(title: str, message: str) -> None:
+    if sys.platform != 'darwin':
+        return
+    safe = message.replace('\\', '\\\\').replace('"', '\\"')[:900]
+    safe_title = title.replace('\\', '\\\\').replace('"', '\\"')[:120]
+    try:
+        subprocess.run([
+            'osascript', '-e',
+            f'display alert "{safe_title}" message "{safe}" as critical',
+        ], check=False)
+    except Exception:
+        pass
+
+
+def _wait_for_flask(port: int, timeout: float = 45.0) -> None:
+    """Avoid a blank window when Flask is still binding (common on slower Macs)."""
+    url = f'http://127.0.0.1:{port}/api/config'
+    deadline = time.time() + timeout
+    last_err = ''
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as exc:
+            last_err = str(exc)
+            time.sleep(0.2)
+    raise RuntimeError(f'Backend did not start on port {port} within {timeout}s: {last_err}')
+
+
 def _find_free_port(preferred: int) -> int:
     """Prefer `preferred` (5001), but never fail to start over it being taken by
     something else (another instance, a dev server, anything) — pick any free
@@ -488,10 +536,13 @@ def _run_desktop_app() -> None:
     _warn_if_translocated()
     preferred_port = int(os.environ.get('FLOORPLAN_PORT', '5001'))
     port = _find_free_port(preferred_port)
+    _desktop_log(f'Starting desktop app; port={port}')
     threading.Thread(
         target=lambda: app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False),
         daemon=True,
     ).start()
+    _wait_for_flask(port)
+    _desktop_log('Flask ready; opening window')
     webview.create_window(
         'FloorPlan Interest Calculator',
         f'http://127.0.0.1:{port}',
@@ -505,6 +556,15 @@ def _run_desktop_app() -> None:
 
 if __name__ == '__main__':
     if _running_as_desktop_app():
-        _run_desktop_app()
+        try:
+            _run_desktop_app()
+        except Exception:
+            tb = traceback.format_exc()
+            _desktop_log(tb)
+            _desktop_alert(
+                'FloorPlan could not start',
+                f'See Desktop/FloorPlan-startup.log for details.\n\n{tb[:400]}',
+            )
+            raise
     else:
         app.run(host='127.0.0.1', port=int(os.environ.get('FLOORPLAN_PORT', '5001')), debug=True)
