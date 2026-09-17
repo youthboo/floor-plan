@@ -6,9 +6,8 @@
 # Usage: ./build_desktop_app.sh
 # Output: backend/dist/FloorPlan Interest Calculator.app
 #
-# Windows: PyInstaller does not cross-compile — this must be re-run on an actual
-# Windows machine (with `;` as the --add-data separator instead of `:`, and without
-# --windowed's macOS .app bundling) to produce a .exe. Not covered by this script yet.
+# Windows: PyInstaller does not cross-compile — run build_desktop_app.ps1 on an
+# actual Windows machine (or VM) instead to produce a .exe.
 
 set -euo pipefail
 

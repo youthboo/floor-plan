@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
@@ -18,7 +19,6 @@ import AppTabsHeader from '../Shared/AppTabsHeader';
 import BackLink from '../Shared/BackLink';
 import SelectDealersModal, { DEALERS } from '../Shared/SelectDealersModal';
 import LoadingSpinner from '../Shared/LoadingSpinner';
-import ErrorAlert from '../Shared/ErrorAlert';
 import { fromISODate, toISODate } from '../../data/mockCampaigns';
 import { campaignService } from '../../services/api';
 import { useAsyncData } from '../../hooks/useAsyncData';
@@ -97,7 +97,6 @@ export const CampaignDetailPage: React.FC = () => {
 
   // New campaigns open directly in edit mode; existing ones open read-only until Edit is pressed.
   const [isEditing, setIsEditing] = useState(isNew);
-  const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
 
@@ -159,6 +158,10 @@ export const CampaignDetailPage: React.FC = () => {
     onSuccess: applyLoadedData,
   });
 
+  useEffect(() => {
+    if (loadError) toast.error(loadError);
+  }, [loadError]);
+
   const addConditionRow = () => {
     setConditions((prev) => [...prev, createConditionRow(nextConditionId.current++)]);
   };
@@ -212,12 +215,10 @@ export const CampaignDetailPage: React.FC = () => {
   };
 
   const handleEdit = () => {
-    setSaveError(null);
     setIsEditing(true);
   };
 
   const handleCancelEdit = () => {
-    setSaveError(null);
     if (isNew) {
       navigate('/?tab=campaign');
       return;
@@ -262,13 +263,12 @@ export const CampaignDetailPage: React.FC = () => {
 
   const save = async (status: 'Active' | 'Draft') => {
     const code = campaignCode.trim();
-    setSaveError(null);
     if (!code) {
-      setSaveError('Campaign code is required.');
+      toast.error('Campaign code is required.');
       return;
     }
     if (!campaignName.trim()) {
-      setSaveError('Campaign name is required.');
+      toast.error('Campaign name is required.');
       return;
     }
 
@@ -277,7 +277,7 @@ export const CampaignDetailPage: React.FC = () => {
       if (isNew) {
         const existing = await campaignService.list();
         if (existing.some((c) => c.code === code)) {
-          setSaveError(`Campaign code "${code}" already exists — pick a different code.`);
+          toast.error(`Campaign code "${code}" already exists — pick a different code.`);
           setIsSaving(false);
           return;
         }
@@ -291,7 +291,7 @@ export const CampaignDetailPage: React.FC = () => {
       setIsEditing(false);
       setIsSaving(false);
     } catch (err) {
-      setSaveError(getApiErrorMessage(err, 'Failed to save campaign'));
+      toast.error(getApiErrorMessage(err, 'Failed to save campaign'));
       setIsSaving(false);
     }
   };
@@ -306,7 +306,6 @@ export const CampaignDetailPage: React.FC = () => {
 
   const handleDuplicate = async () => {
     if (!campaign) return;
-    setSaveError(null);
     setIsDuplicating(true);
     try {
       const existing = await campaignService.list();
@@ -322,7 +321,7 @@ export const CampaignDetailPage: React.FC = () => {
       await campaignService.commit([duplicate]);
       navigate(`/campaign-detail/${encodeURIComponent(newCode)}`);
     } catch (err) {
-      setSaveError(getApiErrorMessage(err, 'Failed to duplicate campaign'));
+      toast.error(getApiErrorMessage(err, 'Failed to duplicate campaign'));
     } finally {
       setIsDuplicating(false);
     }
@@ -392,19 +391,12 @@ export const CampaignDetailPage: React.FC = () => {
                   )}
                 </div>
               </div>
-              {saveError && (
-                <div className="mt-4">
-                  <ErrorAlert message={saveError} />
-                </div>
-              )}
             </div>
 
             {isLoading ? (
               <div className="py-10">
                 <LoadingSpinner />
               </div>
-            ) : loadError ? (
-              <ErrorAlert message={loadError} />
             ) : !isNew && !campaign ? (
               <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center text-sm text-slate-500">
                 Campaign not found.

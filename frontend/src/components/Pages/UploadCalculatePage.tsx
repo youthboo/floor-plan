@@ -17,7 +17,6 @@ import UploadSOTModal from '../Shared/UploadSOTModal';
 import ARDrawdownPreview from '../Shared/ARDrawdownPreview';
 import CalculationResultView from '../Shared/CalculationResultView';
 import LoadingSpinner from '../Shared/LoadingSpinner';
-import ErrorAlert from '../Shared/ErrorAlert';
 import { toast } from 'sonner';
 import {
   parseWorkbookFile,
@@ -96,7 +95,6 @@ export const UploadCalculatePage: React.FC = () => {
   const [isParsing, setIsParsing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isWaiveRecalculating, setIsWaiveRecalculating] = useState(false);
-  const [pageError, setPageError] = useState<string | null>(null);
   const [calcResult, setCalcResult] = useState<CalculationResponse | null>(null);
 
   const { calculate, loading: isCalculating, error: calcError, reset: resetCalculation } =
@@ -110,6 +108,14 @@ export const UploadCalculatePage: React.FC = () => {
       penaltyRate: appConfig.config.penaltyRate,
     });
   }, [appConfig]);
+
+  useEffect(() => {
+    if (configError) toast.error(configError);
+  }, [configError]);
+
+  useEffect(() => {
+    if (calcError) toast.error(calcError);
+  }, [calcError]);
 
   const yearOptions = useMemo(() => {
     const years = new Set(BASE_YEARS);
@@ -128,7 +134,6 @@ export const UploadCalculatePage: React.FC = () => {
   const handleARUpload = async (file: File) => {
     setIsUploadModalOpen(false);
     setIsParsing(true);
-    setPageError(null);
     setCalcResult(null);
     resetCalculation();
 
@@ -142,7 +147,7 @@ export const UploadCalculatePage: React.FC = () => {
       if (!validation.valid) {
         // Reject the new file but keep whatever AR file (if any) was already
         // uploaded successfully — a bad re-upload must not wipe good state.
-        setPageError(validation.error ?? 'The uploaded file failed validation.');
+        toast.error(validation.error ?? 'The uploaded file failed validation.');
         return;
       }
 
@@ -154,7 +159,7 @@ export const UploadCalculatePage: React.FC = () => {
       setSotPreview(null);
     } catch {
       // Unreadable file — leave the previous AR upload (if any) in place.
-      setPageError('Failed to read the uploaded file. Please try a valid .xlsx file.');
+      toast.error('Failed to read the uploaded file. Please try a valid .xlsx file.');
     } finally {
       setIsParsing(false);
     }
@@ -164,7 +169,6 @@ export const UploadCalculatePage: React.FC = () => {
     setArFile(null);
     setWorkbook(null);
     setUploadedFilePath(null);
-    setPageError(null);
     setCalcResult(null);
     setIsEditingConfig(false);
     setIsWaiveModalOpen(false);
@@ -186,7 +190,6 @@ export const UploadCalculatePage: React.FC = () => {
     setArFile(null);
     setWorkbook(null);
     setUploadedFilePath(null);
-    setPageError(null);
   };
 
   const handleRemoveSOT = () => {
@@ -207,7 +210,6 @@ export const UploadCalculatePage: React.FC = () => {
   const handleCalculate = async () => {
     if (!arFile || !systemConfig) return;
 
-    setPageError(null);
     setIsUploading(true);
 
     try {
@@ -232,7 +234,7 @@ export const UploadCalculatePage: React.FC = () => {
         setIsEditingConfig(false);
       }
     } catch (err) {
-      setPageError(getApiErrorMessage(err, 'Upload failed'));
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
       setIsUploading(false);
     }
   };
@@ -240,7 +242,6 @@ export const UploadCalculatePage: React.FC = () => {
   const handleWaiveRecalculate = async (waiveFile: File) => {
     if (!arFile || !systemConfig) return;
 
-    setPageError(null);
     setIsWaiveModalOpen(false);
     setIsWaiveRecalculating(true);
 
@@ -268,7 +269,7 @@ export const UploadCalculatePage: React.FC = () => {
         toast.success('Recalculated with waive conditions applied');
       }
     } catch (err) {
-      setPageError(getApiErrorMessage(err, 'Upload failed'));
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
     } finally {
       setIsWaiveRecalculating(false);
     }
@@ -276,7 +277,6 @@ export const UploadCalculatePage: React.FC = () => {
 
   const handleSOTUpload = async (file: File) => {
     setIsSOTModalOpen(false);
-    setPageError(null);
     setIsSOTUploading(true);
 
     try {
@@ -294,7 +294,7 @@ export const UploadCalculatePage: React.FC = () => {
         setSotPreview(null);
       }
     } catch (err) {
-      setPageError(getApiErrorMessage(err, 'SOT upload failed'));
+      toast.error(getApiErrorMessage(err, 'SOT upload failed'));
     } finally {
       setIsSOTUploading(false);
     }
@@ -307,12 +307,11 @@ export const UploadCalculatePage: React.FC = () => {
       await fileService.downloadFile(calcResult.outputPath, name);
       toast.success('Result exported successfully');
     } catch (err) {
-      setPageError(getApiErrorMessage(err, 'Upload failed'));
+      toast.error(getApiErrorMessage(err, 'Upload failed'));
     }
   };
 
   const busy = isParsing || isUploading || isCalculating || isWaiveRecalculating;
-  const displayError = pageError || calcError || configError;
 
   let busyLabel = 'Reading workbook...';
   if (isWaiveRecalculating) busyLabel = 'Recalculating with waive conditions...';
@@ -334,10 +333,7 @@ export const UploadCalculatePage: React.FC = () => {
         fileName={arFile.name}
         onReset={handleReset}
         onExport={handleExport}
-        onUploadWaive={() => {
-          setPageError(null);
-          setIsWaiveModalOpen(true);
-        }}
+        onUploadWaive={() => setIsWaiveModalOpen(true)}
       />
     );
   } else if (workbook && arFile) {
@@ -348,10 +344,7 @@ export const UploadCalculatePage: React.FC = () => {
         onReset={handleReset}
         onCalculate={handleCalculate}
         onRemoveAR={handleRemoveAR}
-        onUploadSOT={() => {
-          setPageError(null);
-          setIsSOTModalOpen(true);
-        }}
+        onUploadSOT={() => setIsSOTModalOpen(true)}
         onRemoveSOT={handleRemoveSOT}
         sotFileName={sotFileName}
         sotUploading={isSOTUploading}
@@ -526,8 +519,6 @@ export const UploadCalculatePage: React.FC = () => {
               )}
             </CardContent>
           </Card>
-
-          {displayError && <ErrorAlert message={displayError} />}
 
           {contentSection}
         </div>

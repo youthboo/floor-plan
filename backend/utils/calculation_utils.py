@@ -623,6 +623,11 @@ def _load_active_campaign_index() -> tuple[dict[str, dict[str, Any]], list[dict[
             if tier.get('effectiveStart') and tier.get('effectiveEnd')
         ])
 
+        # NOTE: keyed by name, not code. The "Duplicate" action (frontend/src/utils/campaignDuplicate.ts)
+        # always names copies "<name> - copy" without checking for existing collisions, so duplicating
+        # the same campaign twice (or duplicating a "- copy") produces two campaigns sharing this key —
+        # whichever loads last here silently overwrites the other's freeDays/rateRanges for matching,
+        # even though quota_index below still holds rows from both. Known gap, not yet fixed.
         campaigns_by_name[campaign['name'].strip().lower()] = {
             'code': campaign['code'],
             'name': campaign['name'],
@@ -635,6 +640,7 @@ def _load_active_campaign_index() -> tuple[dict[str, dict[str, Any]], list[dict[
                 continue
             quota_index.append({
                 'campaignName': campaign['name'],
+                'range': quota_row.get('range', ''),
                 'model': _normalize_model(quota_row['model']),
                 'ddStart': pd.Timestamp(quota_row['ddStart']),
                 'ddEnd': pd.Timestamp(quota_row['ddEnd']),
@@ -654,11 +660,13 @@ def _match_campaign_for_vin(
     alloc_date: pd.Timestamp,
     quota_index: list[dict[str, Any]],
     consumed_units: dict[int, int],
-) -> str | None:
-    """Find the campaign whose quota-row condition (Model + DD range, dealer scope,
-    remaining quota) this VIN satisfies; returns its name, or None. Consumes one unit
-    of the matched row's quota (consumed_units is mutated in place, keyed by the row's
-    position in quota_index) so later VINs fall through once a row is exhausted."""
+) -> dict[str, Any] | None:
+    """Find the quota-row entry (Model + DD range, dealer scope, remaining quota) this
+    VIN satisfies, or None. Consumes one unit of the matched row's quota (consumed_units
+    is mutated in place, keyed by the row's position in quota_index) so later VINs fall
+    through once a row is exhausted. Returns the whole entry (campaign name + its
+    quota-row range code, e.g. 'A60') rather than just the name, since the range code is
+    what the mismatch panel displays alongside the campaign name."""
     if pd.isna(alloc_date) or not model or (isinstance(model, float) and pd.isna(model)):
         return None
     model_norm = _normalize_model(model)
@@ -678,8 +686,54 @@ def _match_campaign_for_vin(
         if entry['unitsQuota'] > 0 and consumed_units.get(idx, 0) >= entry['unitsQuota']:
             continue
         consumed_units[idx] = consumed_units.get(idx, 0) + 1
-        return entry['campaignName']
+        return entry
     return None
+
+
+def _diagnose_assignment_failure(
+    assigned_name: str,
+    model: Any,
+    dealer_code: Any,
+    alloc_date: pd.Timestamp,
+    quota_index: list[dict[str, Any]],
+) -> str:
+    """Explain why `assigned_name` (the AR file's asserted campaign) doesn't cover this
+    VIN, checking the three 3.3.1 eligibility criteria in the spec's own order — Date,
+    Model, Dealer scope — against every one of that campaign's quota rows, and reporting
+    the first criterion that fails no row. This mirrors the RLS spec's reason examples
+    ("Drawdown date outside campaign period", "Model mismatch", "Dealer not in scope")
+    instead of a single generic message."""
+    rows = [
+        entry for entry in quota_index
+        if entry['campaignName'].strip().lower() == assigned_name.strip().lower()
+    ]
+    if not rows:
+        return f"Campaign '{assigned_name}' not found"
+
+    if pd.isna(alloc_date):
+        return f"No allocation date to check against '{assigned_name}'"
+    date_ok_rows = [r for r in rows if r['ddStart'] <= alloc_date <= r['ddEnd']]
+    if not date_ok_rows:
+        return f"Outside '{assigned_name}''s drawdown period"
+
+    model_norm = _normalize_model(model) if model else ''
+    model_ok_rows = [r for r in date_ok_rows if r['model'] == model_norm]
+    if not model_ok_rows:
+        return f"Model '{model}' not in '{assigned_name}''s quota"
+
+    dealer_str = str(dealer_code).strip()
+
+    def in_scope(entry: dict[str, Any]) -> bool:
+        if entry['selectedDealers']:
+            return dealer_str in entry['selectedDealers']
+        return dealer_str not in entry['exceptionDealers']
+
+    if not any(in_scope(r) for r in model_ok_rows):
+        return f"Dealer not in '{assigned_name}''s scope"
+
+    # All three criteria pass on at least one row — the only remaining reason a full
+    # match failed is that row's quota being exhausted by earlier VINs.
+    return f"'{assigned_name}' quota exhausted"
 
 
 def _resolve_campaign_terms(
@@ -696,7 +750,13 @@ def _resolve_campaign_terms(
     caught. Pricing uses the matched campaign's terms only when it agrees with the AR
     file's assertion; any mismatch (either direction) prices at Default ('Normal') —
     the panel is for source-data correction, never an alternate price preview.
-    - Not in Master but in legacy config -> old behavior, not a mismatch."""
+    - Not in Master but in legacy config -> old behavior, not a mismatch.
+
+    NOTE: the literal string 'Normal' is the sentinel for "Default campaign" in both the
+    assignedTo and shouldBe fields of the returned mismatch dict. The frontend's
+    campaignLabel() (CalculationResultView.tsx) renders 'Normal' as "— none —" in both
+    the Assigned to and Should be columns — this is intentional per the RLS spec
+    (Default = "— none —" in both columns), not a bug."""
     raw_assigned = row.get('Subvention Campaign')
     assigned = str(raw_assigned) if raw_assigned is not None else 'Normal'
     default_free_days = int(subvention_map.get('Normal', 0) or 0)
@@ -717,17 +777,33 @@ def _resolve_campaign_terms(
             'reason': reason,
         }
 
-    matched_name = _match_campaign_for_vin(model, dealer_code, alloc_date, quota_index, consumed_units)
+    def should_be_label(name: str, range_code: str) -> str:
+        # "Should be" is the system's own match against Campaign Master, so it can carry
+        # the matched quota row's range code (e.g. "A60") for disambiguation — "Assigned
+        # to" is the AR file's raw text and stays as typed either way.
+        return f"{range_code} · {name}" if range_code else name
+
+    matched_entry = _match_campaign_for_vin(model, dealer_code, alloc_date, quota_index, consumed_units)
+    matched_name = matched_entry['campaignName'] if matched_entry else None
 
     if matched_name:
         if matched_name.strip().lower() == assigned.strip().lower():
             campaign = campaigns_by_name[matched_name.strip().lower()]
             return campaign['freeDays'], campaign['rateRanges'], None
         # AR file's assertion disagrees with the system's independent match — price at
-        # Default regardless of direction; report the discrepancy for correction.
+        # Default regardless of direction; report the discrepancy for correction. The
+        # reason explains why the AR file's own assertion fails, not what it should be
+        # — that's what the Should Be column is for. 'Normal' (no assertion at all) and
+        # an unrecognized name have nothing of their own to diagnose against Campaign
+        # Master, so they get their own explanation instead of the criteria checklist.
+        if assigned.strip().lower() == 'normal':
+            reason = f"Model '{model}' qualifies for '{matched_name}'"
+        elif assigned.strip().lower() in campaigns_by_name:
+            reason = _diagnose_assignment_failure(assigned, model, dealer_code, alloc_date, quota_index)
+        else:
+            reason = f"Campaign '{assigned}' not found"
         return default_free_days, None, mismatch(
-            matched_name,
-            f"Model '{model}' allocated {drawdown_display} matches campaign '{matched_name}', not '{assigned}'",
+            should_be_label(matched_name, matched_entry.get('range', '')), reason
         )
 
     if assigned.strip().lower() == 'normal':
@@ -735,7 +811,8 @@ def _resolve_campaign_terms(
 
     if assigned.strip().lower() in campaigns_by_name:
         return default_free_days, None, mismatch(
-            'Normal', f"VIN does not meet '{assigned}' model/allocation-date conditions"
+            'Normal',
+            _diagnose_assignment_failure(assigned, model, dealer_code, alloc_date, quota_index),
         )
 
     legacy_free_days = subvention_map.get(assigned)
@@ -743,9 +820,7 @@ def _resolve_campaign_terms(
         # Legacy campaign not yet migrated into Campaign Master — old behavior, not a mismatch.
         return int(legacy_free_days), None, None
 
-    return default_free_days, None, mismatch(
-        'Normal', f"Campaign '{assigned}' not found in Campaign Master or legacy config"
-    )
+    return default_free_days, None, mismatch('Normal', f"Campaign '{assigned}' not found")
 
 
 def _calculate_charges(

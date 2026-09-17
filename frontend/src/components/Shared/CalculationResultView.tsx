@@ -292,17 +292,17 @@ export const CalculationResultView: React.FC<CalculationResultViewProps> = ({
                   <TableCell className="px-4 py-3 text-slate-700">{row.dealer}</TableCell>
                   <TableCell className="whitespace-nowrap px-4 py-3 text-slate-700">{row.model}</TableCell>
                   <TableCell className="whitespace-nowrap px-4 py-3 text-slate-700">{row.drawdown}</TableCell>
-                  <TableCell className="px-4 py-3">
-                    <span className="inline-flex rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-800">
+                  <TableCell className="whitespace-nowrap px-4 py-3">
+                    <span className="inline-flex w-fit whitespace-nowrap rounded-full bg-orange-100 px-2.5 py-1 text-xs font-medium text-orange-800">
                       {campaignLabel(row.assignedTo)}
                     </span>
                   </TableCell>
-                  <TableCell className="px-4 py-3">
-                    <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
+                  <TableCell className="whitespace-nowrap px-4 py-3">
+                    <span className="inline-flex w-fit whitespace-nowrap rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800">
                       {campaignLabel(row.shouldBe)}
                     </span>
                   </TableCell>
-                  <TableCell className="px-4 py-3 text-slate-600">{row.reason}</TableCell>
+                  <TableCell className="max-w-sm px-4 py-3 text-slate-600">{row.reason}</TableCell>
                 </TableRow>
               ))}
             </TableBody>

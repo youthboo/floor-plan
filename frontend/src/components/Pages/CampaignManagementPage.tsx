@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search } from 'lucide-react';
+import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
@@ -12,7 +13,6 @@ import AddCampaignsModal from '../Shared/AddCampaignsModal';
 import UploadCampaignModal from '../Shared/UploadCampaignModal';
 import ConfirmDialog from '../Shared/ConfirmDialog';
 import LoadingSpinner from '../Shared/LoadingSpinner';
-import ErrorAlert from '../Shared/ErrorAlert';
 import { cn } from '../../lib/utils';
 import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
@@ -34,7 +34,7 @@ export const CampaignManagementPage: React.FC = () => {
     data: campaignsData,
     isLoading,
     error: listLoadError,
-    refetch: refetchCampaignList,
+    refetch: refetchCampaigns,
   } = useAsyncData(() => campaignService.list(), [], { errorMessage: 'Failed to load campaigns' });
   const campaigns = campaignsData ?? [];
   const [isManageMode, setIsManageMode] = useState(false);
@@ -46,16 +46,11 @@ export const CampaignManagementPage: React.FC = () => {
   const [isUploadCampaignModalOpen, setIsUploadCampaignModalOpen] = useState(false);
   const [isImportingFile, setIsImportingFile] = useState(false);
   const [isBulkActionInProgress, setIsBulkActionInProgress] = useState(false);
-  const [bulkActionError, setBulkActionError] = useState<string | null>(null);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
-  // Shares one error slot with the list-load error, matching pre-refactor behavior
-  // where both were the same state variable (so a refetch clears either).
-  const [importError, setImportError] = useState<string | null>(null);
-  const loadError = listLoadError || importError;
-  const refetchCampaigns = async () => {
-    setImportError(null);
-    await refetchCampaignList();
-  };
+
+  useEffect(() => {
+    if (listLoadError) toast.error(listLoadError);
+  }, [listLoadError]);
 
   const activeCampaigns = campaigns.filter((c) => c.status !== 'Draft').length;
 
@@ -108,14 +103,13 @@ export const CampaignManagementPage: React.FC = () => {
   };
 
   const handleUploadCampaign = async (file: File) => {
-    setImportError(null);
     setIsImportingFile(true);
     try {
       const importResult = await campaignService.importFile(file);
       setIsUploadCampaignModalOpen(false);
       navigate('/review-campaigns', { state: { importResult } });
     } catch (err) {
-      setImportError(getApiErrorMessage(err, 'Campaign file import failed'));
+      toast.error(getApiErrorMessage(err, 'Campaign file import failed'));
       setIsUploadCampaignModalOpen(false);
     } finally {
       setIsImportingFile(false);
@@ -130,7 +124,6 @@ export const CampaignManagementPage: React.FC = () => {
   const exitManageMode = () => {
     setIsManageMode(false);
     setSelectedCodes([]);
-    setBulkActionError(null);
   };
 
   const toggleSelectAllOnPage = () => {
@@ -154,7 +147,6 @@ export const CampaignManagementPage: React.FC = () => {
 
   const handleDuplicate = async () => {
     if (selectedCodes.length === 0) return;
-    setBulkActionError(null);
     setIsBulkActionInProgress(true);
     try {
       const takenCodes = new Set(campaigns.map((c) => c.code));
@@ -170,7 +162,7 @@ export const CampaignManagementPage: React.FC = () => {
       await refetchCampaigns();
       setSelectedCodes([]);
     } catch (err) {
-      setBulkActionError(getApiErrorMessage(err, 'Failed to duplicate campaign(s)'));
+      toast.error(getApiErrorMessage(err, 'Failed to duplicate campaign(s)'));
     } finally {
       setIsBulkActionInProgress(false);
     }
@@ -182,7 +174,6 @@ export const CampaignManagementPage: React.FC = () => {
   };
 
   const handleDeleteConfirm = async () => {
-    setBulkActionError(null);
     setIsBulkActionInProgress(true);
     try {
       for (const code of selectedCodes) {
@@ -191,7 +182,7 @@ export const CampaignManagementPage: React.FC = () => {
       await refetchCampaigns();
       setSelectedCodes([]);
     } catch (err) {
-      setBulkActionError(getApiErrorMessage(err, 'Failed to delete campaign(s)'));
+      toast.error(getApiErrorMessage(err, 'Failed to delete campaign(s)'));
       await refetchCampaigns();
     } finally {
       setIsBulkActionInProgress(false);
@@ -309,9 +300,6 @@ export const CampaignManagementPage: React.FC = () => {
                 </TabsList>
               </Tabs>
             </div>
-
-            {loadError && <ErrorAlert message={loadError} />}
-            {bulkActionError && <ErrorAlert message={bulkActionError} />}
 
             {isLoading ? (
               <div className="py-10">

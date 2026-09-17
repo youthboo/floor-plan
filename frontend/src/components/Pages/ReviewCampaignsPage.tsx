@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '../ui/Button';
 import { Card, CardContent, CardHeader } from '../ui/Card';
 import { Checkbox } from '../ui/Checkbox';
@@ -8,7 +9,6 @@ import { DatePicker } from '../ui/DatePicker';
 import { Input } from '../ui/Input';
 import AppTabsHeader from '../Shared/AppTabsHeader';
 import BackLink from '../Shared/BackLink';
-import ErrorAlert from '../Shared/ErrorAlert';
 import { campaignService } from '../../services/api';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { formatNumber } from '../../utils/formatters';
@@ -29,7 +29,6 @@ export const ReviewCampaignsPage: React.FC = () => {
     state?.importResult.campaigns ?? []
   );
   const [isImporting, setIsImporting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const handleTabChange = (tab: string) => {
     navigate(`/?tab=${tab}`);
@@ -50,13 +49,12 @@ export const ReviewCampaignsPage: React.FC = () => {
 
   const handleImport = async () => {
     if (campaigns.length === 0) return;
-    setError(null);
     setIsImporting(true);
     try {
       await campaignService.commit(campaigns);
       navigate('/?tab=campaign');
     } catch (err) {
-      setError(getApiErrorMessage(err, 'Import failed'));
+      toast.error(getApiErrorMessage(err, 'Import failed'));
       setIsImporting(false);
     }
   };
@@ -116,8 +114,6 @@ export const ReviewCampaignsPage: React.FC = () => {
                     </Button>
                   </div>
                 </div>
-
-                {error && <div className="mb-6"><ErrorAlert message={error} /></div>}
 
                 {campaigns.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-300 bg-white px-6 py-16 text-center">
